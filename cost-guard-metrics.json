@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-27",
+  "config": {
+    "enabled": true,
+    "strictFreeMode": true,
+    "services": {
+      "gemini_text": {
+        "name": "Google Gemini (Textos & SEO)",
+        "dailyLimit": 120,
+        "rateLimitPerMin": 12,
+        "blockPaidCalls": false
+      },
+      "gemini_image": {
+        "name": "Google Gemini / Imagens IA",
+        "dailyLimit": 30,
+        "rateLimitPerMin": 4,
+        "blockPaidCalls": false
+      },
+      "gemini_video": {
+        "name": "Google Gemini Video / Omni",
+        "dailyLimit": 5,
+        "rateLimitPerMin": 100,
+        "blockPaidCalls": false
+      },
+      "google_places": {
+        "name": "Google Maps Platform / Places API",
+        "dailyLimit": 100,
+        "rateLimitPerMin": 15,
+        "blockPaidCalls": false
+      },
+      "cnpj_lookup": {
+        "name": "Consulta Pública de CNPJ (BrasilAPI/CNPJ.ws)",
+        "dailyLimit": 250,
+        "rateLimitPerMin": 25,
+        "blockPaidCalls": false
+      },
+      "outscraper": {
+        "name": "Outscraper Google Maps v3",
+        "dailyLimit": 50,
+        "rateLimitPerMin": 6,
+        "blockPaidCalls": true
+      }
+    }
+  },
+  "usage": {
+    "gemini_text": {
+      "dailyCount": 9,
+      "totalCount": 9,
+      "lastUsed": "2026-10-27T14:53:34.554Z",
+      "historyByMinute": {
+        "2026-10-27T12:42": 1,
+        "2026-10-27T12:54": 1,
+        "2026-10-27T13:46": 1,
+        "2026-10-27T13:48": 2,
+        "2026-10-27T13:49": 1,
+        "2026-10-27T14:38": 1,
+        "2026-10-27T14:53": 2
+      }
+    },
+    "gemini_video": {
+      "dailyCount": 5,
+      "totalCount": 12,
+      "lastUsed": "2026-10-27T13:49:41.075Z",
+      "historyByMinute": {
+        "2026-10-27T13:49": 5
+      }
+    }
+  },
+  "cacheStats": {
+    "cnpjHits": 0,
+    "cnpjMisses": 0,
+    "aiDeduplicationHits": 0
+  }
+}
