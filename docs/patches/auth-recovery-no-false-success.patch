@@ -1,0 +1,18 @@
+--- a/src/pages/AuthPage.jsx
++++ b/src/pages/AuthPage.jsx
+@@ -191,8 +191,13 @@
+                 className="text-slate-500 hover:text-slate-900"
+                 onClick={async () => {
+                   if (!email) return toast.info("Digite seu e-mail primeiro");
+-                  await api.post("/auth/forgot-password", { email }).catch(() => {});
+-                  toast.success("Se o e-mail existir, enviaremos as instruções.");
++                  try {
++                    const { data } = await api.post("/auth/forgot-password", { email });
++                    // A received request is not evidence that a message was sent.
++                    toast.info(data?.detail || "Solicitação recebida pelo servidor.");
++                  } catch (err) {
++                    toast.error(fmtErr(err, "Recuperação indisponível. Nenhuma senha foi alterada."));
++                  }
+                 }}
+               >
+                 Esqueci a senha

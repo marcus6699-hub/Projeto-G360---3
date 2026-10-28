@@ -1,0 +1,9 @@
+--- a/src/pages/PublicSite.jsx
++++ b/src/pages/PublicSite.jsx
+@@ -30,5 +30,5 @@
+         <div className="auth-spinner" />
+       </div>
+     );
+-  return <iframe title="Site gerado" data-testid="public-site-frame" srcDoc={html} className="w-full border-0 fixed inset-0" style={{ height: "100vh" }} />;
++  return <iframe title="Site gerado" data-testid="public-site-frame" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation" srcDoc={html} className="w-full border-0 fixed inset-0" style={{ height: "100vh" }} />;
+ }

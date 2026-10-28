@@ -1,0 +1,177 @@
+[
+  {
+    "path": "index.html",
+    "bytes": 10232,
+    "sha256": "58e018ee5ae4a1ebcb3d307e54ed83043714dd316bf421e1a0762d6cb6b17db4"
+  },
+  {
+    "path": "RELATORIO.md",
+    "bytes": 9216,
+    "sha256": "ca732a79cfff3897088364aed48f85c57e67e3a41efbc99287075544e0a15330"
+  },
+  {
+    "path": "README.txt",
+    "bytes": 255,
+    "sha256": "f0de2cab3cc62a8dba58dcc4f580716375f934615bf6bd1f715f45a19206cec4"
+  },
+  {
+    "path": "resultado-navegador.json",
+    "bytes": 9574,
+    "sha256": "2fae40d408739582c0d40d29385e9607d6ed2150682e1c0dbe877bcc442dbf67"
+  },
+  {
+    "path": "empresas-ficticias.json",
+    "bytes": 321,
+    "sha256": "91c3b870f2fd6d4d9ead4b350074ac88442f89480a388d8e330347be20d5f219"
+  },
+  {
+    "path": "capturas/administracao-celular.png",
+    "bytes": 485840,
+    "sha256": "68e9e0d5e41c0171647fbcfaae4205c6e2901cdf08e8509c459f230f2f41f65d"
+  },
+  {
+    "path": "capturas/administracao-desktop.png",
+    "bytes": 479415,
+    "sha256": "11c53f17216efbaf3a3c067a6a862ae7832628fe3ce72df89eacdb504ef2c012"
+  },
+  {
+    "path": "capturas/auditoria-gbp-celular.png",
+    "bytes": 175489,
+    "sha256": "ff5013efa6ac74d0a5437a1672a9fac60c4ea60110728abe96c85b8e9a947f9c"
+  },
+  {
+    "path": "capturas/auditoria-gbp-desktop.png",
+    "bytes": 194723,
+    "sha256": "e875dd8cbe24bbdc430eca814a4c1f500f6857190b03be93a122050b6ce3960c"
+  },
+  {
+    "path": "capturas/branding-celular.png",
+    "bytes": 115846,
+    "sha256": "fa6e586cea1bf0a75d1925e0c294b745dde5498495689302e1057ebe31742903"
+  },
+  {
+    "path": "capturas/branding-desktop.png",
+    "bytes": 142238,
+    "sha256": "eb4bbb83def56484ec2f9ca7f1b2f8218f1a3d59549c4bba3b3dfa21912e23ee"
+  },
+  {
+    "path": "capturas/central-ia-celular.png",
+    "bytes": 133039,
+    "sha256": "a56b19b259d031b1dede69c36c1aed313afccb8f9dfedd2c2bd20d5658e3b64f"
+  },
+  {
+    "path": "capturas/central-ia-desktop.png",
+    "bytes": 159974,
+    "sha256": "5299609cec7c957d70dec235e181dfd9877d3816b1d2056d47cb01560adb370a"
+  },
+  {
+    "path": "capturas/crm-celular.png",
+    "bytes": 72554,
+    "sha256": "10292c2447e1bfc4bfa60072a2c9b83705eaf2d9cf2c746fd4f24e782d86de90"
+  },
+  {
+    "path": "capturas/crm-desktop.png",
+    "bytes": 70075,
+    "sha256": "1854e5595915caf70135169bf63fba70be24d2f54a3ebd7371753b24cc4f30ef"
+  },
+  {
+    "path": "capturas/dashboard-celular.png",
+    "bytes": 69768,
+    "sha256": "952154be60fc362219ee385335783161ef66e4eb8eb20ca40522341363a4e54b"
+  },
+  {
+    "path": "capturas/dashboard-desktop.png",
+    "bytes": 81360,
+    "sha256": "9eff8ec4b6db2542153b095a16048b5002939fe2fbc7204426e19eba13344b4a"
+  },
+  {
+    "path": "capturas/editor-celular.png",
+    "bytes": 60346,
+    "sha256": "33939c2c331e27858ed254c9fecbaa21c684a6ddeb7e94444014e0c1ef98020e"
+  },
+  {
+    "path": "capturas/editor-desktop.png",
+    "bytes": 177018,
+    "sha256": "44f988a10a60091c3fa58fcd8b20fd9daeca669b67ed7c51bf6d12920340ec88"
+  },
+  {
+    "path": "capturas/escritorio-celular.png",
+    "bytes": 91191,
+    "sha256": "d03e4242faccab9546514db85d391531edcaaf8e0310e5210b260a93dae8319b"
+  },
+  {
+    "path": "capturas/escritorio-desktop.png",
+    "bytes": 107477,
+    "sha256": "8969a090002eb9811b06325fa503cccd9cf8a1696d23d759b3544083ec6c0a8e"
+  },
+  {
+    "path": "capturas/geogrid-celular.png",
+    "bytes": 188992,
+    "sha256": "e0c4712024af3d51bfd2a4a843fc893e2d73b3dabd019582505a5f4fd8501e33"
+  },
+  {
+    "path": "capturas/geogrid-desktop.png",
+    "bytes": 197992,
+    "sha256": "42f1bb88e80715e5de814a5761b0631c9bed670d6b81bcb87cc697040c595faf"
+  },
+  {
+    "path": "capturas/login-celular.png",
+    "bytes": 28916,
+    "sha256": "c05da17341ede376e4c21c3e31072443da08ff3ea76ebefad33f200ee8b7b9b0"
+  },
+  {
+    "path": "capturas/login-desktop.png",
+    "bytes": 183371,
+    "sha256": "72cfaf6a339dfdd95be87dcb5f9238bbb9175345ec5a8b93514a16e0ee3bcbab"
+  },
+  {
+    "path": "capturas/pacote-gbp-celular.png",
+    "bytes": 125584,
+    "sha256": "88d8bdee4f80d218c2860e834dc591b6d41d6aa67c3d6a2e6fd728a18003b602"
+  },
+  {
+    "path": "capturas/pacote-gbp-desktop.png",
+    "bytes": 144501,
+    "sha256": "fd2018b79798a99910fa968cf96e9dd593a5a413e57579bb33d260a6c5327032"
+  },
+  {
+    "path": "capturas/prospeccao-celular.png",
+    "bytes": 69338,
+    "sha256": "4d53eab3613bb55e8006bb7b9c8ece958a27a8f87c16408da422851e1c27d8b1"
+  },
+  {
+    "path": "capturas/prospeccao-desktop.png",
+    "bytes": 87876,
+    "sha256": "15b3befefcf203b263efed07b43c794cb49b07a7b9819abc3ad0ed6f525aabd9"
+  },
+  {
+    "path": "capturas/site-express-celular.png",
+    "bytes": 279669,
+    "sha256": "ec83e5e62429b4cdaf90eeae46a0e2effbab25ced914d58fb84d21457ac11b7a"
+  },
+  {
+    "path": "capturas/site-express-desktop.png",
+    "bytes": 329417,
+    "sha256": "e6adcf88a890c1ef6125adf3ebe81769ab7e963c5ca69259618c01029c731549"
+  },
+  {
+    "path": "capturas/troca-empresa-celular.png",
+    "bytes": 127104,
+    "sha256": "8f7d05df73dfdf613b5f9b89928893e240e10796876a0770bbec1da4c83c7d11"
+  },
+  {
+    "path": "capturas/troca-empresa-desktop.png",
+    "bytes": 154453,
+    "sha256": "15187bf926f54a95fd257b82fbf1eebb8985c069c4ba9e3a04467a9547163b2e"
+  },
+  {
+    "path": "downloads/site-ficticio.html",
+    "bytes": 66135,
+    "sha256": "718a4dfbe116072ab9fdf4478ba40ffade45e37388fd4810c4e455bb8582e6ca"
+  },
+  {
+    "path": "downloads/site-ficticio.zip",
+    "bytes": 67155,
+    "sha256": "727d5536f30c793971891f40bc9e52d4509f2cba84ee9b84d37b30cbeebf44b3"
+  }
+]

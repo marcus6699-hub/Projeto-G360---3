@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {buildIntegratedGbpPackage} from './g360AiPipeline.ts';
+import {gbpBusinessKey,buildApprovedSiteBriefing} from './gbpApproval.js';
+import {createProjectData} from '../sitegen/projectFactory.js';
+const biz={id:'fixture-business',name:'Empresa Teste',city:'Cidade Fictícia',category:'Manutenção',phone:'11987654321',services:['Manutenção'],items:[{name:'Visita técnica',description:'Visita para avaliação.'}]};
+const pkg=buildIntegratedGbpPackage(biz);
+const input={pkg,approvedItems:{bio:true,'svc-0':true,'prod-0':true},identityApproved:true,packageApproved:true,selectedPalette:{id:'test',primary:'#123456',secondary:'#654321',accent:'#223344',bg:'#ffffff'},logoPreview:'https://example.test/logo.png',userPhotos:['https://example.test/foto.png'],businessKey:'fixture-business',ownerUid:'fixture-owner'};
+test('local adapter emits consumer compatible fields without claiming verification',()=>{assert.equal(pkg.source,'local-draft');assert.equal(pkg.isVerifiedFactual,false);assert.equal(pkg.posts.length,11);assert.equal(pkg.photoSeoNames.length,20);assert.ok(pkg.description750.length<=750);assert.ok(pkg.posts.every(p=>typeof p.text==='string'));});
+test('missing business identity is rejected',()=>assert.throws(()=>buildIntegratedGbpPackage({name:''})));
+test('identity keys distinguish tenants and same-name businesses',()=>{assert.notEqual(gbpBusinessKey('one',biz),gbpBusinessKey('two',biz));assert.notEqual(gbpBusinessKey('one',biz),gbpBusinessKey('one',{...biz,id:'other'}));});
+test('unapproved package cannot be sent to Site Express',()=>assert.throws(()=>buildApprovedSiteBriefing({...input,packageApproved:false})));
+test('unapproved identity cannot be sent to Site Express',()=>assert.throws(()=>buildApprovedSiteBriefing({...input,identityApproved:false})));
+test('description requires its individual approval',()=>assert.throws(()=>buildApprovedSiteBriefing({...input,approvedItems:{}})));
+test('handoff conserves branding, approved services, media and description',()=>{const b=buildApprovedSiteBriefing(input);assert.deepEqual(b.approvedServices,[pkg.services[0]]);assert.equal(b.approvedProducts.length,1);assert.equal(b.approvedBranding.palette.primary,'#123456');assert.equal(b.approvedMedia.length,1);assert.equal(b.approvedDescription,pkg.description750);});
+test('pending products never cross approval boundary',()=>{const b=buildApprovedSiteBriefing({...input,approvedItems:{bio:true,'prod-5':true}});assert.equal(b.approvedProducts.length,0);});
+test('factory does not reintroduce items when all are pending',()=>{const p=createProjectData({...biz,items:[{name:'[PENDENTE] Item',isPending:true}]},'servicos');assert.deepEqual(p.business.items,[]);});
+test('factory receives full approved GBP handoff',()=>{const b=buildApprovedSiteBriefing(input);const p=createProjectData({...biz,approvedGbpBriefing:b},'servicos');assert.equal(p.business.bio,pkg.description750);assert.equal(p.business.items.length,2);assert.equal(p.approvedPalette.primary,'#123456');assert.equal(p.logo?.url,'https://example.test/logo.png');assert.deepEqual(p.business.photos,['https://example.test/foto.png']);});

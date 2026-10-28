@@ -1,0 +1,109 @@
+--- a/src/lib/sitegen/generateSiteHtml.js
++++ b/src/lib/sitegen/generateSiteHtml.js
+@@ -74,18 +74,43 @@
+ const BACKEND = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_BACKEND_URL || "" : "";
+ export const absUrl = (u) => (typeof u === "string" && u.startsWith("/api/") ? BACKEND + u : u);
+ 
++// URL policy for browser-rendered media/links; server fetches still require publicUrlClient.
++function publicSiteUrl(value, kind = "link") {
++  const raw = typeof value === "string" ? value.trim() : "";
++  if (!raw) return "";
++  const encoded = raw.replace(/[\\'"<>\r\n()]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
++  if (kind === "image" && /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)(?:;|,)/i.test(raw)) return encoded;
++  if (kind === "video" && /^data:video\/(?:mp4|webm|ogg)(?:;|,)/i.test(raw)) return encoded;
++  try {
++    const parsed = new URL(raw, "https://g360-relative.invalid");
++    if (["http:", "https:"].includes(parsed.protocol)) {
++      if (parsed.username || parsed.password) return "";
++      return encoded;
++    }
++    if (kind !== "link" && parsed.protocol === "blob:") return encoded;
++  } catch {}
++  return "";
++}
++const imageFit = value => ["cover", "contain", "fill", "none", "scale-down"].includes(value) ? value : "cover";
++const coordinate = (value, limit) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) && Math.abs(Number(value)) <= limit ? Number(value) : null;
++
+ function normalizeBusiness(b) {
+   return {
+     ...b,
+-    photos: (b.photos || []).map(absUrl),
+-    items: (b.items || []).map((it) => ({ ...it, image: absUrl(it.image) })),
++    whatsapp: String(b.whatsapp || "").replace(/\D/g, "").slice(0, 20),
++    google_maps_uri: publicSiteUrl(b.google_maps_uri),
++    website: publicSiteUrl(b.website),
++    lat: coordinate(b.lat, 90),
++    lng: coordinate(b.lng, 180),
++    photos: (b.photos || []).map(url => publicSiteUrl(absUrl(url), "image")),
++    items: (b.items || []).map((it) => ({ ...it, image: publicSiteUrl(absUrl(it.image), "image") })),
+   };
+ }
+ 
+ export function buildCtx(data) {
+-  const arch = data.archetype || "produtos";
++  const arch = Object.prototype.hasOwnProperty.call(ARCH_SECTIONS, data.archetype) ? data.archetype : "produtos";
+   const defaultTpl = arch === "gastronomia" ? "simprao" : arch === "servicos" ? "atelie-val" : "vitrine-express";
+-  const templateId = data.templateId || defaultTpl;
++  const templateId = typeof data.templateId === "string" && /^[a-z0-9-]{1,80}$/.test(data.templateId) ? data.templateId : defaultTpl;
+   const tplDef = SITE_TEMPLATES.find((t) => t.id === templateId);
+   const palList = PALETTES[arch] || PALETTES.produtos;
+   const foundPal = ALL_PALETTES.find((p) => p.id === (data.paletteId || tplDef?.paletteId)) || palList[0];
+@@ -100,16 +125,16 @@
+     templateId,
+     pal,
+     font,
+-    logo: data.logo || null,
++    logo: data.logo ? { ...data.logo, url: publicSiteUrl(data.logo.url, "image") } : null,
+     promo: data.promo || {},
+-    video: data.video || { url: "" },
+-    buttons: data.buttons || {},
++    video: { ...data.video, url: publicSiteUrl(data.video?.url, "video") },
++    buttons: Object.fromEntries(Object.entries(data.buttons || {}).map(([key, cfg]) => [key, { ...cfg, effect: ["lift", "shimmer", "pulse", "outline"].includes(cfg?.effect) ? cfg.effect : "lift" }])) ,
+     t: (key, fallback) => (data.texts && data.texts[key] != null ? data.texts[key] : fallback),
+     img: (id, fallback) => {
+       const o = (data.images || {})[id];
+       return {
+-        url: absUrl((o && o.url) || fallback),
+-        fit: (o && o.fit) || "cover",
++        url: publicSiteUrl(absUrl((o && o.url) || fallback), "image"),
++        fit: imageFit(o && o.fit),
+       };
+     },
+   };
+@@ -155,7 +180,7 @@
+ <meta property="og:image" content="${esc((b.photos || [])[0] || "")}">
+ <meta property="og:locale" content="pt_BR">
+ <meta name="twitter:card" content="summary_large_image">
+-<link rel="canonical" href="${esc(m.canonical || "")}">
++<link rel="canonical" href="${esc(publicSiteUrl(m.canonical))}">
+ ${m.gsc ? `<meta name="google-site-verification" content="${esc(m.gsc)}">` : ""}
+ <script type="application/ld+json">${scriptJson(jsonLd)}</script>`;
+ }
+@@ -324,7 +349,7 @@
+ <style>${buildCss(ctx.pal, font, data.archetype, ctx.templateId)}</style>
+ ${pixelScripts(data)}
+ </head>
+-<body class="arch-${data.archetype} tpl-${ctx.templateId}">
++<body class="arch-${ctx.arch} tpl-${ctx.templateId}">
+ ${gtmBody(data)}
+ ${data.archetype === "produtos" ? S.topbar(ctx) : ""}
+ ${S.header(ctx)}
+--- a/src/lib/sitegen/sections.js
++++ b/src/lib/sitegen/sections.js
+@@ -1112,11 +1112,11 @@
+       <div class="loc-line">${ICONS.clock}<span${ed("loc.hours")}>${esc(ctx.t("loc.hours", b.hours_text || "Consulte os horários"))}</span></div>
+       <div class="loc-line">${ICONS.phone}<a href="tel:+${esc(b.whatsapp)}" data-wa>${esc(b.phone)}</a></div>
+       <div class="loc-btns">
+-        <a class="btn btn-pri bfx-lift" style="padding:12px 20px;font-size:13.5px" href="${mapsUrl}" target="_blank" rel="noopener" data-btn="loc_maps">${ICONS.mappin}<span>Abrir no Google Maps</span></a>
+-        <a class="btn btn-ghost bfx-lift" style="padding:12px 20px;font-size:13.5px;color:var(--ink)" href="${wazeUrl}" target="_blank" rel="noopener" data-btn="loc_waze">${ICONS.navigation}<span>Traçar Rota no Waze</span></a>
+-      </div>
+-    </div>
+-    <div class="loc-map"><iframe src="${embed}" loading="lazy" title="Mapa de ${esc(b.name)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe></div>
++        <a class="btn btn-pri bfx-lift" style="padding:12px 20px;font-size:13.5px" href="${esc(mapsUrl)}" target="_blank" rel="noopener" data-btn="loc_maps">${ICONS.mappin}<span>Abrir no Google Maps</span></a>
++        <a class="btn btn-ghost bfx-lift" style="padding:12px 20px;font-size:13.5px;color:var(--ink)" href="${esc(wazeUrl)}" target="_blank" rel="noopener" data-btn="loc_waze">${ICONS.navigation}<span>Traçar Rota no Waze</span></a>
++      </div>
++    </div>
++    <div class="loc-map"><iframe src="${esc(embed)}" loading="lazy" title="Mapa de ${esc(b.name)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe></div>
+   </div>
+ </div></section>`;
+ }

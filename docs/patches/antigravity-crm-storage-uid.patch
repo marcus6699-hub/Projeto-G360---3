@@ -1,0 +1,145 @@
+--- a/src/components/g360/G360CrmFinancePanel.jsx
++++ b/src/components/g360/G360CrmFinancePanel.jsx
+@@ -24,6 +24,7 @@
+   Edit3,
+ } from "lucide-react";
+ import { api, fmtErr } from "@/lib/api";
++import { useAuth } from "@/context/AuthContext";
+ 
+ function escapeHtml(str) {
+   if (str === null || str === undefined) return "";
+@@ -109,12 +110,26 @@
+ CLÁUSULA 4ª — DA VIGÊNCIA E ASSINATURA:
+ Este contrato entra em vigor na data de {{DATA}} pelo período de {{VIGENCIA}} meses, sendo firmado pelas partes mediante assinatura física ou eletrônica externa nos termos da MP 2.200-2/2001 e Lei 14.063/2020.`;
+ 
+-export default function G360CrmFinancePanel({
++// Remount scoped state when the validated backend identity changes.
++export default function G360CrmFinancePanel(props) {
++  const { user } = useAuth();
++  if (!user?.id) return null;
++  return <ScopedG360CrmFinancePanel {...props} key={user.id} ownerUid={user.id} />;
++}
++
++function ScopedG360CrmFinancePanel({
++  ownerUid,
+   dark = false,
+   initialSubView = "kanban", // "kanban" | "proposal" | "contract"
+   onOpenGbpPackage,
+   onOpenSiteExpress,
+ }) {
++  // Never read or auto-assign old unscoped records; their owner is unknown.
++  // Namespacing prevents accidental cross-account reuse, not malicious local access.
++  const ownerStorage = {
++    getItem: (name) => localStorage.getItem(`g360:${encodeURIComponent(ownerUid)}:${name}`),
++    setItem: (name, value) => localStorage.setItem(`g360:${encodeURIComponent(ownerUid)}:${name}`, value),
++  };
+   const [subView, setSubView] = useState(
+     initialSubView === "finance" ? "kanban" : initialSubView
+   );
+@@ -123,14 +138,14 @@
+   // Track which Stage 1 leads have "Proposta Enviada" badge active & which workflows were completed
+   const [proposalSentMap, setProposalSentMap] = useState(() => {
+     try {
+-      return JSON.parse(localStorage.getItem("g360_crm_proposal_sent") || "{}");
++      return JSON.parse(ownerStorage.getItem("g360_crm_proposal_sent") || "{}");
+     } catch {
+       return {};
+     }
+   });
+   const [workflowCompletionMap, setWorkflowCompletionMap] = useState(() => {
+     try {
+-      return JSON.parse(localStorage.getItem("g360_crm_workflow_done") || "{}");
++      return JSON.parse(ownerStorage.getItem("g360_crm_workflow_done") || "{}");
+     } catch {
+       return {};
+     }
+@@ -154,7 +169,7 @@
+   const [selectedLeadId, setSelectedLeadId] = useState("");
+   const [packages, setPackages] = useState(() => {
+     try {
+-      const saved = localStorage.getItem("g360_three_packages");
++      const saved = ownerStorage.getItem("g360_three_packages");
+       return saved ? JSON.parse(saved) : INITIAL_THREE_PACKAGES;
+     } catch {
+       return INITIAL_THREE_PACKAGES;
+@@ -166,7 +181,7 @@
+   // Contract Generator state
+   const [contractForm, setContractForm] = useState(() => {
+     try {
+-      const saved = localStorage.getItem("g360_contract_provider");
++      const saved = ownerStorage.getItem("g360_contract_provider");
+       const p = saved ? JSON.parse(saved) : null;
+       return {
+         clientName: "Encanto Móveis Planejados",
+@@ -209,7 +224,7 @@
+   const [customContractTemplate, setCustomContractTemplate] = useState(() => {
+     try {
+       return (
+-        localStorage.getItem("g360_custom_contract_template") ||
++        ownerStorage.getItem("g360_custom_contract_template") ||
+         DEFAULT_CUSTOM_CONTRACT_TEMPLATE
+       );
+     } catch {
+@@ -224,7 +239,7 @@
+   const savePackagesToStorage = (nextPackages) => {
+     setPackages(nextPackages);
+     try {
+-      localStorage.setItem("g360_three_packages", JSON.stringify(nextPackages));
++      ownerStorage.setItem("g360_three_packages", JSON.stringify(nextPackages));
+     } catch {}
+   };
+ 
+@@ -237,7 +252,7 @@
+     setProposalSentMap((prev) => {
+       const next = { ...prev, [leadId]: !prev[leadId] };
+       try {
+-        localStorage.setItem("g360_crm_proposal_sent", JSON.stringify(next));
++        ownerStorage.setItem("g360_crm_proposal_sent", JSON.stringify(next));
+       } catch {}
+       return next;
+     });
+@@ -247,7 +262,7 @@
+     setContractForm((f) => {
+       const updated = { ...f, [field]: value };
+       try {
+-        localStorage.setItem(
++        ownerStorage.setItem(
+           "g360_contract_provider",
+           JSON.stringify({
+             name: updated.providerName,
+@@ -332,7 +347,7 @@
+     const nextMap = { ...workflowCompletionMap, [lead.id]: updatedStatus };
+     setWorkflowCompletionMap(nextMap);
+     try {
+-      localStorage.setItem("g360_crm_workflow_done", JSON.stringify(nextMap));
++      ownerStorage.setItem("g360_crm_workflow_done", JSON.stringify(nextMap));
+     } catch {}
+ 
+     // If both GBP Package AND Site Express are done -> Stage 4 (Concluído / Ativo), otherwise Stage 3 (Em Otimização)
+@@ -407,7 +422,7 @@
+         setCustomContractTemplate(content);
+         setUseCustomTemplate(true);
+         try {
+-          localStorage.setItem("g360_custom_contract_template", content);
++          ownerStorage.setItem("g360_custom_contract_template", content);
+         } catch {}
+         toast.success(`Modelo de contrato "${file.name}" carregado com sucesso!`);
+       }
+@@ -453,7 +468,7 @@
+       setProposalSentMap((prev) => {
+         const next = { ...prev, [selectedLead.id]: true };
+         try {
+-          localStorage.setItem("g360_crm_proposal_sent", JSON.stringify(next));
++          ownerStorage.setItem("g360_crm_proposal_sent", JSON.stringify(next));
+         } catch {}
+         return next;
+       });
+@@ -1531,7 +1546,7 @@
+                   onChange={(e) => {
+                     setCustomContractTemplate(e.target.value);
+                     try {
+-                      localStorage.setItem("g360_custom_contract_template", e.target.value);
++                      ownerStorage.setItem("g360_custom_contract_template", e.target.value);
+                     } catch {}
+                   }}
+                   className={`w-full p-4 rounded-xl border font-mono text-[12.5px] leading-relaxed outline-none ${borderCol} ${subtleBg}`}

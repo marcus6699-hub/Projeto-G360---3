@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {randomBytes,scryptSync} from 'node:crypto';
+const target=path.resolve(process.argv[2]||'integration-test-data');
+if(fs.existsSync(target))throw Error('Choose a NEW directory; existing data is never overwritten.');
+fs.mkdirSync(target,{recursive:true,mode:0o700});
+const credentials=[];
+const users=['admin','user'].map(role=>{const password=randomBytes(24).toString('base64url'),salt=randomBytes(16).toString('hex');const email=`integration-${role}@example.invalid`;credentials.push({email,password,role,fictional:true});return {id:`integration-${role}`,name:`Fictitious ${role}`,email,role,status:'active',password:`scrypt:${salt}:${scryptSync(password,salt,64).toString('hex')}`}});
+fs.writeFileSync(path.join(target,'db.json'),JSON.stringify({users,projects:[],clicks:{},aiSettings:{},g360:{audits:[],crmLeads:[],packagesByBusiness:{},financeGoals:{},deploySettings:{}}},null,2),{mode:0o600,flag:'wx'});
+fs.writeFileSync(path.join(target,'TEST-CREDENTIALS-PRIVATE.json'),JSON.stringify(credentials,null,2),{mode:0o600,flag:'wx'});
+console.log(`Fictional data prepared at ${target}. Test-only credentials in TEST-CREDENTIALS-PRIVATE.json; never publish it.`);

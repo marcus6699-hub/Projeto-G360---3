@@ -1,0 +1,368 @@
+{
+  "source": "/workspace/g360-unificado-v1",
+  "included_source_paths": [
+    ".env.example",
+    ".gitignore",
+    "DRAFT_firestore.rules",
+    "README.md",
+    "bun.lock",
+    "docs/AUDITORIA-APIS-E-AUTENTICACAO.md",
+    "docs/AUDITORIA-G360-2026-10-27.md",
+    "docs/BACKUP-EXTERNO-E-RECUPERACAO.md",
+    "docs/CODEX-G360-CONTRATO-AUTH.md",
+    "docs/CODEX-G360-DEPENDENCIAS.md",
+    "docs/CODEX-G360-EMULADORES.md",
+    "docs/CODEX-G360-EXECUCAO-MESTRE.md",
+    "docs/CODEX-G360-NAVEGADOR.md",
+    "docs/CODEX-G360-PAGAMENTOS-SIMULADOS.md",
+    "docs/CODEX-G360-SAIDAS-EXTERNAS.md",
+    "docs/CONTRATOS-ASSINATURA-INTEGRACAO.md",
+    "docs/CONTRATOS-PAGAMENTOS-DECISOES.md",
+    "docs/ESCRITORIO-G360-BACKEND.md",
+    "docs/HOMOLOGACAO-VISUAL-ETAPA5.md",
+    "docs/IMPLEMENTACAO-PERSISTENCIA-JSON-2026-10-27.md",
+    "docs/INTEGRACAO-QUATRO-IAS-V1.md",
+    "docs/PLANO-SEGURANCA-G360.md",
+    "docs/RELATORIO-INTEGRACAO-G360-2026-10-27.md",
+    "docs/REVISAO-DEPENDENCIAS-INTEGRACAO.md",
+    "docs/REVISAO-IDENTIDADE-E-CHAVES-INTEGRACAO.md",
+    "docs/SAAS-CHECKLIST-E-VALIDACAO-2026-10-27.md",
+    "docs/VALIDACAO-SEGURANCA-G360-2026-10-27.md",
+    "docs/patches/antigravity-crm-storage-uid.patch",
+    "docs/patches/antigravity-public-site-sandbox.patch",
+    "docs/patches/auth-context-logout.patch",
+    "docs/patches/auth-recovery-no-false-success.patch",
+    "docs/patches/dependency-candidate.patch",
+    "docs/patches/dependency-grpc-smoke.mjs",
+    "docs/patches/external-provider-authorization.patch",
+    "docs/patches/opencode-sitegen-input-security.patch",
+    "docs/planejamento-urls/DIAGNOSTICO-E-PLANO.md",
+    "docs/planejamento-urls/IMPLEMENTACAO-SSRF-2026-10-27.md",
+    "docs/planejamento-urls/persistence.contract.mjs",
+    "docs/planejamento-urls/ssrf.contract.mjs",
+    "eslint.config.js",
+    "firebase-applet-config.json",
+    "firebase-blueprint.json",
+    "firestore.rules",
+    "firestore.rules.test.ts",
+    "index.html",
+    "metadata.json",
+    "package.json",
+    "public/assets/aistudio/PROMPT_UNICO_G360_BLINDAGEM_TOTAL_SEGURANCA_CUSTOS_172de47e.md",
+    "public/assets/aistudio/image_1439367e.png",
+    "public/fonts/Nunito-OFL-LICENSE.txt",
+    "public/fonts/nunito-latin-400-normal.woff2",
+    "public/fonts/nunito-latin-600-normal.woff2",
+    "public/fonts/nunito-latin-700-normal.woff2",
+    "public/fonts/nunito-latin-800-normal.woff2",
+    "public/homologacao/empresas-ficticias.json",
+    "scripts/backup-json.mjs",
+    "scripts/backup-json.test.mjs",
+    "scripts/browser-local.py",
+    "scripts/firebase-emulator.contract.mjs",
+    "scripts/homologacao-visual.py",
+    "scripts/prepare-integration-fixture.mjs",
+    "scripts/run-firebase-emulators.mjs",
+    "scripts/serve-private-review.py",
+    "scripts/setup-admin.mjs",
+    "scripts/sitegen-browser-fixtures.mjs",
+    "scripts/sitegen-browser-local.py",
+    "scripts/test-inventory-reporter.mjs",
+    "scripts/test-isolated.mjs",
+    "security_spec.md",
+    "server.js",
+    "server.ts",
+    "src/App.tsx",
+    "src/components/AiSettingsPanel.jsx",
+    "src/components/AiStudioPanel.jsx",
+    "src/components/ApiKeysSettings.tsx",
+    "src/components/BrandPanel.jsx",
+    "src/components/ClickStats.jsx",
+    "src/components/ClientsPanel.jsx",
+    "src/components/DigitalContract.tsx",
+    "src/components/Editor.jsx",
+    "src/components/GmbModal.jsx",
+    "src/components/Inspector.jsx",
+    "src/components/ItemsPanel.jsx",
+    "src/components/Logo.jsx",
+    "src/components/MarketingPanel.jsx",
+    "src/components/SalesHubPanel.jsx",
+    "src/components/SearchHome.jsx",
+    "src/components/SectionsPanel.jsx",
+    "src/components/TemplateSelector.jsx",
+    "src/components/g360/ApiKeysSettings.jsx",
+    "src/components/g360/Dashboard.jsx",
+    "src/components/g360/DigitalContract.tsx",
+    "src/components/g360/EvidenceAuditSummary.jsx",
+    "src/components/g360/G360AuditPanel.jsx",
+    "src/components/g360/G360CrmFinancePanel.jsx",
+    "src/components/g360/G360FreeAiHub.jsx",
+    "src/components/g360/G360GbpPackagePanel.jsx",
+    "src/components/g360/G360SaaSSettingsPanel.jsx",
+    "src/components/g360/G360SiteExpressDirectPanel.jsx",
+    "src/components/g360/GoogleWorkspacePanel.tsx",
+    "src/components/g360/Office.jsx",
+    "src/components/g360/VerifiedProspectingWorkbench.jsx",
+    "src/components/g360/VerifiedSiteReview.jsx",
+    "src/components/ui/Badge.jsx",
+    "src/components/ui/Button.jsx",
+    "src/components/ui/Card.jsx",
+    "src/components/ui/MetricCard.jsx",
+    "src/components/ui/SectionHeader.jsx",
+    "src/components/ui/dropdown-menu.jsx",
+    "src/components/ui/popover.jsx",
+    "src/components/ui/select.jsx",
+    "src/components/ui/switch.jsx",
+    "src/context/AuthContext.jsx",
+    "src/db/drizzle.config.ts",
+    "src/db/index.ts",
+    "src/db/schema.ts",
+    "src/db/users.test.ts",
+    "src/db/users.ts",
+    "src/firebase.ts",
+    "src/g360-tokens.css",
+    "src/index.css",
+    "src/lib/ai/g360AiPipeline.ts",
+    "src/lib/ai/gbpApproval.js",
+    "src/lib/ai/gbpIntegration.test.ts",
+    "src/lib/ai/promptHardening.test.ts",
+    "src/lib/ai/promptHardening.ts",
+    "src/lib/api.js",
+    "src/lib/auth/logoutCoordinator.test.ts",
+    "src/lib/auth/logoutCoordinator.ts",
+    "src/lib/firebase-admin.ts",
+    "src/lib/firestoreSchemas.test.ts",
+    "src/lib/firestoreSchemas.ts",
+    "src/lib/g360/auditContract.js",
+    "src/lib/g360/auditContract.test.mjs",
+    "src/lib/g360/filterOsmPlaces.js",
+    "src/lib/g360/filterOsmPlaces.test.mjs",
+    "src/lib/sitegen/allTemplatesZip.test.mjs",
+    "src/lib/sitegen/contactSafety.test.mjs",
+    "src/lib/sitegen/generateSiteHtml.js",
+    "src/lib/sitegen/integrationSafety.test.mjs",
+    "src/lib/sitegen/masterImagePrompt.test.ts",
+    "src/lib/sitegen/masterImagePrompt.ts",
+    "src/lib/sitegen/projectFactory.js",
+    "src/lib/sitegen/salesSafety.test.mjs",
+    "src/lib/sitegen/sections.js",
+    "src/lib/sitegen/siteExport.test.mjs",
+    "src/lib/sitegen/siteSecurity.test.ts",
+    "src/lib/sitegen/sitegen.test.ts",
+    "src/lib/sitegen/theme.js",
+    "src/lib/sitegen/verifiedSite.js",
+    "src/lib/sitegen/verifiedSite.test.mjs",
+    "src/lib/sitegen/zycronCatalog.js",
+    "src/lib/utils.js",
+    "src/main.tsx",
+    "src/middleware/auth.ts",
+    "src/pages/AuthPage.jsx",
+    "src/pages/PublicSite.jsx",
+    "src/pages/Studio.jsx",
+    "src/server/adminRecovery.test.ts",
+    "src/server/authPolicy.test.ts",
+    "src/server/authPolicy.ts",
+    "src/server/blindagem.test.ts",
+    "src/server/costGuard.test.ts",
+    "src/server/costGuard.ts",
+    "src/server/dataPaths.mjs",
+    "src/server/dataPaths.test.ts",
+    "src/server/evidenceAudit.test.ts",
+    "src/server/evidenceAudit.ts",
+    "src/server/evidenceAuditRoutes.test.ts",
+    "src/server/evidenceAuditRoutes.ts",
+    "src/server/externalAccess.test.ts",
+    "src/server/externalAccess.ts",
+    "src/server/firebaseSession.test.ts",
+    "src/server/g360Engine.ts",
+    "src/server/geogridGeometry.test.ts",
+    "src/server/geogridGeometry.ts",
+    "src/server/googlePhoto.ts",
+    "src/server/integrationRegistry.ts",
+    "src/server/integrations.test.ts",
+    "src/server/jsonPersistence.mjs",
+    "src/server/jsonPersistence.test.ts",
+    "src/server/masterIntegration.test.ts",
+    "src/server/office.test.ts",
+    "src/server/office.ts",
+    "src/server/osmProspecting.test.ts",
+    "src/server/osmProspecting.ts",
+    "src/server/paymentLedger.test.ts",
+    "src/server/paymentLedger.ts",
+    "src/server/paymentSimulation.test.ts",
+    "src/server/paymentSimulation.ts",
+    "src/server/projectPolicy.ts",
+    "src/server/publicUrl.test.ts",
+    "src/server/publicUrl.ts",
+    "src/server/saasSecurity.test.ts",
+    "src/server/security.test.ts",
+    "src/server/startup.test.ts",
+    "src/server/unifiedIntegration.test.ts",
+    "src/server/verifiedDataGuard.test.ts",
+    "src/server/verifiedDataGuard.ts",
+    "src/server/visualHomologation.test.ts",
+    "tsconfig.json",
+    "vite.config.ts"
+  ],
+  "excluded_paths": [
+    {
+      "path": "ALTERACOES-INTEGRACAO.json",
+      "reason": "old snapshot hashes and container-specific inventory; replaced by transfer manifest"
+    },
+    {
+      "path": "MANIFESTO-HOMOLOGACAO-ETAPA5.json",
+      "reason": "old snapshot hashes and container-specific inventory; replaced by transfer manifest"
+    },
+    {
+      "path": "MANIFESTO-INTEGRACAO.json",
+      "reason": "old snapshot hashes and container-specific inventory; replaced by transfer manifest"
+    },
+    {
+      "path": "docs/auditoria/evidencias.json",
+      "reason": "raw audit evidence; historical reports retained"
+    },
+    {
+      "path": "node_modules/.bin/acorn",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/autoprefixer",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/baseline-browser-mapping",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/browserslist",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/drizzle-kit",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/esbuild",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/eslint",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/fxparser",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/glob",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/jiti",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/mime",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/nanoid",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/node-which",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/proto-loader-gen-types",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/rimraf",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/rolldown",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/semver",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/tsc",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/tsx",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/update-browserslist-db",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/uuid",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/.bin/vite",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/@esbuild-kit/core-utils/node_modules/.bin/esbuild",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/@google-cloud/firestore-api/node_modules/google-gax/node_modules/.bin/proto-loader-gen-types",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/@google-cloud/storage/node_modules/.bin/mime",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/google-gax/node_modules/.bin/proto-loader-gen-types",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    },
+    {
+      "path": "node_modules/tsx/node_modules/.bin/esbuild",
+      "reason": "link; do not copy runtime dependencies or external destinations"
+    }
+  ],
+  "excluded_directory_rules": [
+    ".git",
+    ".integration-site-merge",
+    ".npm-cache",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules"
+  ],
+  "sensitive_scan": "No high-confidence real secret found; limited patterns and configuration checks, not proof of absence.",
+  "fixture_allowlist_findings": [
+    {
+      "path": "firebase-applet-config.json",
+      "category": "explicit_fictional_api_key_fixture",
+      "line": 2
+    },
+    {
+      "path": "scripts/browser-local.py",
+      "category": "explicit_fictional_api_key_fixture",
+      "line": 46
+    },
+    {
+      "path": "scripts/homologacao-visual.py",
+      "category": "explicit_fictional_api_key_fixture",
+      "line": 49
+    }
+  ],
+  "preserved_tests": "Fictional credentials inside regression tests are not real credentials; no generated databases or session artifacts included.",
+  "package_only_changes": [
+    ".gitignore augmented; no source project modified",
+    "firebase-applet-config.example.json added; active config is demo-only",
+    "Windows guide and optional Windows helper scripts added"
+  ],
+  "no_git_history": true
+}

@@ -1,0 +1,24 @@
+--- a/src/context/AuthContext.jsx
++++ b/src/context/AuthContext.jsx
+@@ -1,5 +1,7 @@
+ import { createContext, useContext, useEffect, useState, useCallback } from "react";
+ import { api } from "@/lib/api";
++import { logout as signOutFirebase } from "@/firebase";
++import { logoutEverywhere } from "@/lib/auth/logoutCoordinator";
+ 
+ const AuthCtx = createContext(null);
+ 
+@@ -32,8 +34,11 @@
+     return data;
+   }, []);
+   const logout = useCallback(async () => {
+-    await api.post("/auth/logout").catch(() => {});
+-    setUser(false);
++    await logoutEverywhere({
++      endBackendSession: () => api.post("/auth/logout"),
++      signOutFirebase,
++      clearLocalState: () => setUser(false),
++    });
+   }, []);
+   return <AuthCtx.Provider value={{ user, login, register, logout }}>{children}</AuthCtx.Provider>;
+ }

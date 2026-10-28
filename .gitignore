@@ -1,0 +1,34 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Private persistence artifacts; never commit local data snapshots or stale locks.
+db.json.g360-previous.json
+cost-guard-metrics.json.g360-previous.json
+db.json.g360-lock/
+cost-guard-metrics.json.g360-lock/
+db.json*.tmp-*
+cost-guard-metrics.json*.tmp-*
+
+# Generated Python checks and future untracked private documents.
+__pycache__/
+*.pyc
+db.json
+cost-guard-metrics.json
+
+# Transfer package: never commit locally generated fixtures/secrets.
+integration-test-data/
+private-data/
+.homologacao/
+TEST-CREDENTIALS-PRIVATE.json
+**/TEST-CREDENTIALS-PRIVATE.json
+*.pem
+*.key
+*.p12
+*.pfx
+.env.local

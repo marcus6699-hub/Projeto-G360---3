@@ -1,0 +1,392 @@
+{
+  "fixture": "/tmp/g360-browser-81y0xvlw",
+  "browser": "/usr/bin/chromium",
+  "checks": [
+    {
+      "name": "Anonymous browser redirects to login and protected API denies access",
+      "status": "passed"
+    },
+    {
+      "name": "Incorrect password is refused in the real login UI",
+      "status": "passed"
+    },
+    {
+      "name": "Local login UI creates a validated HttpOnly Strict session",
+      "status": "passed"
+    },
+    {
+      "name": "Reload preserves the validated local session",
+      "status": "passed"
+    },
+    {
+      "name": "Nunito font loaded from local assets without Google Fonts dependency",
+      "status": "passed"
+    },
+    {
+      "name": "Central AI reports unconfigured provider instead of a fabricated model result",
+      "status": "passed"
+    },
+    {
+      "name": "Authenticated browser-context Office API works; private files remain inaccessible",
+      "status": "passed"
+    },
+    {
+      "name": "Office real UI renders on desktop/tablet/mobile without horizontal overflow",
+      "status": "passed"
+    },
+    {
+      "name": "Unconfigured prospecting shows unavailable in the real UI",
+      "status": "passed"
+    },
+    {
+      "name": "Controlled prospect imported; real backend saves evidence and renders unscored Geogrid",
+      "status": "passed"
+    },
+    {
+      "name": "GBP human approval transfers controlled company to Site Express",
+      "status": "passed"
+    },
+    {
+      "name": "Real editor inline change persists and HTML/ZIP downloads contain approved fictional content",
+      "status": "passed"
+    },
+    {
+      "name": "Business B replaces A and cannot reuse A approval for site handoff",
+      "status": "passed"
+    },
+    {
+      "name": "Fictional project creation/listing works through browser-context HTTP",
+      "status": "passed"
+    },
+    {
+      "name": "PublicSite mounted iframe renders the fictional company and cannot read parent document",
+      "status": "passed"
+    },
+    {
+      "name": "Active contract UI keeps draft/pending signature after its internal button",
+      "status": "passed"
+    },
+    {
+      "name": "Actual browser downloads an HTML draft marked awaiting signatures, not a signed PDF",
+      "status": "passed"
+    },
+    {
+      "name": "Same-account provider data remains available after reload",
+      "status": "passed"
+    },
+    {
+      "name": "Existing project/clients UI displays the fictional persisted project",
+      "status": "passed"
+    },
+    {
+      "name": "Logout revokes backend access and stays denied after reload/navigation",
+      "status": "passed"
+    },
+    {
+      "name": "Password recovery UI displays backend unavailability without false delivery",
+      "status": "passed"
+    },
+    {
+      "name": "Account B does not display account A provider data",
+      "status": "passed"
+    }
+  ],
+  "findings": [],
+  "pageErrors": [],
+  "screenshots": [
+    {
+      "module": "login",
+      "device": "desktop",
+      "path": "capturas/login-desktop.png"
+    },
+    {
+      "module": "login",
+      "device": "celular",
+      "path": "capturas/login-celular.png"
+    },
+    {
+      "module": "dashboard",
+      "device": "desktop",
+      "path": "capturas/dashboard-desktop.png"
+    },
+    {
+      "module": "dashboard",
+      "device": "celular",
+      "path": "capturas/dashboard-celular.png"
+    },
+    {
+      "module": "central-ia",
+      "device": "desktop",
+      "path": "capturas/central-ia-desktop.png"
+    },
+    {
+      "module": "central-ia",
+      "device": "celular",
+      "path": "capturas/central-ia-celular.png"
+    },
+    {
+      "module": "administracao",
+      "device": "desktop",
+      "path": "capturas/administracao-desktop.png"
+    },
+    {
+      "module": "administracao",
+      "device": "celular",
+      "path": "capturas/administracao-celular.png"
+    },
+    {
+      "module": "crm",
+      "device": "desktop",
+      "path": "capturas/crm-desktop.png"
+    },
+    {
+      "module": "crm",
+      "device": "celular",
+      "path": "capturas/crm-celular.png"
+    },
+    {
+      "module": "escritorio",
+      "device": "desktop",
+      "path": "capturas/escritorio-desktop.png"
+    },
+    {
+      "module": "escritorio",
+      "device": "celular",
+      "path": "capturas/escritorio-celular.png"
+    },
+    {
+      "module": "prospeccao",
+      "device": "desktop",
+      "path": "capturas/prospeccao-desktop.png"
+    },
+    {
+      "module": "prospeccao",
+      "device": "celular",
+      "path": "capturas/prospeccao-celular.png"
+    },
+    {
+      "module": "geogrid",
+      "device": "desktop",
+      "path": "capturas/geogrid-desktop.png"
+    },
+    {
+      "module": "geogrid",
+      "device": "celular",
+      "path": "capturas/geogrid-celular.png"
+    },
+    {
+      "module": "auditoria-gbp",
+      "device": "desktop",
+      "path": "capturas/auditoria-gbp-desktop.png"
+    },
+    {
+      "module": "auditoria-gbp",
+      "device": "celular",
+      "path": "capturas/auditoria-gbp-celular.png"
+    },
+    {
+      "module": "pacote-gbp",
+      "device": "desktop",
+      "path": "capturas/pacote-gbp-desktop.png"
+    },
+    {
+      "module": "pacote-gbp",
+      "device": "celular",
+      "path": "capturas/pacote-gbp-celular.png"
+    },
+    {
+      "module": "branding",
+      "device": "desktop",
+      "path": "capturas/branding-desktop.png"
+    },
+    {
+      "module": "branding",
+      "device": "celular",
+      "path": "capturas/branding-celular.png"
+    },
+    {
+      "module": "site-express",
+      "device": "desktop",
+      "path": "capturas/site-express-desktop.png"
+    },
+    {
+      "module": "site-express",
+      "device": "celular",
+      "path": "capturas/site-express-celular.png"
+    },
+    {
+      "module": "editor",
+      "device": "desktop",
+      "path": "capturas/editor-desktop.png"
+    },
+    {
+      "module": "editor",
+      "device": "celular",
+      "path": "capturas/editor-celular.png"
+    },
+    {
+      "module": "troca-empresa",
+      "device": "desktop",
+      "path": "capturas/troca-empresa-desktop.png"
+    },
+    {
+      "module": "troca-empresa",
+      "device": "celular",
+      "path": "capturas/troca-empresa-celular.png"
+    }
+  ],
+  "visualChecks": [
+    {
+      "module": "login",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "login",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "dashboard",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "dashboard",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "central-ia",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "central-ia",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "administracao",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "administracao",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "crm",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "crm",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "escritorio",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "escritorio",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "prospeccao",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "prospeccao",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "geogrid",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "geogrid",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "auditoria-gbp",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "auditoria-gbp",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "pacote-gbp",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "pacote-gbp",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "branding",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "branding",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "site-express",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "site-express",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "editor",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "editor",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "troca-empresa",
+      "device": "desktop",
+      "page_horizontal_overflow": false
+    },
+    {
+      "module": "troca-empresa",
+      "device": "celular",
+      "page_horizontal_overflow": false
+    }
+  ],
+  "blockedExternalHosts": [
+    "apis.google.com",
+    "cdn.tailwindcss.com",
+    "fonts.googleapis.com",
+    "images.unsplash.com"
+  ],
+  "limitations": [
+    "No real Firebase/OAuth/Firestore flow",
+    "Office view is read-only",
+    "Contract download is HTML, not PDF",
+    "No message, signature or payment sent"
+  ]
+}
