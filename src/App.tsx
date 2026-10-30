@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import AuthPage from "@/pages/AuthPage";
 import Studio from "@/pages/Studio";
 import PublicSite from "@/pages/PublicSite";
+import PublicContractSign from "@/pages/PublicContractSign";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const auth = useAuth() as any;
@@ -30,6 +31,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<AuthPage />} />
           <Route path="/site/:slug" element={<PublicSite />} />
+          <Route path="/contrato/:id" element={<PublicContractSign />} />
           <Route
             path="/"
             element={
@@ -40,7 +42,7 @@ export default function App() {
           />
         </Routes>
       </BrowserRouter>
-      <Toaster position="top-right" richColors toastOptions={{ style: { fontFamily: "Inter, sans-serif" } }} />
+      <Toaster position="top-right" richColors toastOptions={{ style: { fontFamily: "Nunito, Inter, sans-serif" } }} />
     </AuthProvider>
   );
 }

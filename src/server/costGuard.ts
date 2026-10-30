@@ -42,46 +42,55 @@ export const DEFAULT_CONFIG: CostGuardConfig = {
   strictFreeMode: true,
   services: {
     gemini_text: {
-      name: "Google Gemini (Textos & SEO)",
-      dailyLimit: 120,
-      rateLimitPerMin: 12,
+      name: "Google Gemini (Textos & SEO — Free Tier Sem Grounding Pago)",
+      dailyLimit: 250,
+      rateLimitPerMin: 15,
       blockPaidCalls: false,
+    },
+    gemini_grounding_paid: {
+      name: "Google Gemini Grounding (Google Search / Maps Tool — SKU Pago $35/1k)",
+      dailyLimit: 10,
+      rateLimitPerMin: 2,
+      blockPaidCalls: true, // BLOQUEADO POR PADRÃO para nunca cobrar no Google Cloud!
     },
     gemini_image: {
       name: "Google Gemini / Imagens IA",
       dailyLimit: 30,
       rateLimitPerMin: 4,
-      blockPaidCalls: false,
+      blockPaidCalls: true, // Usa motor gratuito Pollinations/Flux sem custo GCP por padrão
     },
     gemini_video: {
       name: "Google Gemini Video / Omni",
       dailyLimit: 10,
       rateLimitPerMin: 2,
-      blockPaidCalls: false,
+      blockPaidCalls: true, // Usa motor gratuito WebM Motion por padrão
     },
     google_places: {
-      name: "Google Maps Platform / Places API",
-      dailyLimit: 100,
-      rateLimitPerMin: 15,
-      blockPaidCalls: false,
+      name: "Google Maps Platform / Places API (Enterprise & Photos SKU Pago)",
+      dailyLimit: 50,
+      rateLimitPerMin: 10,
+      blockPaidCalls: true, // BLOQUEADO POR PADRÃO para zerar cobranças no Google Cloud (My Project 11343)!
     },
     cnpj_lookup: {
-      name: "Consulta Pública de CNPJ (BrasilAPI/CNPJ.ws)",
+      name: "Consulta Pública de CNPJ (BrasilAPI/CNPJ.ws — 100% Gratuito)",
       dailyLimit: 250,
       rateLimitPerMin: 25,
       blockPaidCalls: false,
     },
     outscraper: {
-      name: "Outscraper Google Maps v3",
-      dailyLimit: 50,
-      rateLimitPerMin: 6,
-      blockPaidCalls: true, // Blocked by default in strict free mode
+      name: "Outscraper Google Maps v3 (Free Tier 500 Empresas/mês — Sem Cobrança GCP)",
+      dailyLimit: 100,
+      rateLimitPerMin: 10,
+      blockPaidCalls: false, // Permitido no Free Tier (não cobra no Google Cloud)
     },
   },
 };
 
 // In-memory cache for CNPJ queries (24-hour TTL)
 const cnpjCache = new Map<string, { data: any; source: string; timestamp: number }>();
+
+// Persistent in-memory cache for Business/Lead/Autocomplete queries (7-day TTL) to avoid repeat API calls
+const businessSearchCache = new Map<string, { data: any; timestamp: number }>();
 
 // In-flight request deduplication map to prevent rapid double-clicks
 const inFlightRequests = new Map<string, { promise: Promise<any>; timestamp: number }>();
@@ -104,7 +113,7 @@ export class CostGuardService {
       if (fs.existsSync(METRICS_FILE)) {
         const raw = JSON.parse(fs.readFileSync(METRICS_FILE, "utf-8"));
         if (raw.date === today) {
-          // Merge loaded config with default config to keep all services defined
+          // Merge loaded config with default config, enforcing strictFreeMode defaults for paid Google Cloud SKUs
           const mergedServices = { ...DEFAULT_CONFIG.services };
           if (raw.config?.services) {
             for (const [k, v] of Object.entries(raw.config.services)) {
@@ -113,11 +122,18 @@ export class CostGuardService {
               }
             }
           }
+          // Guarantee paid Google Cloud SKUs stay blocked when strictFreeMode is active unless explicitly overridden with allowPaidGcp
+          const isStrict = raw.config?.strictFreeMode ?? true;
+          if (isStrict && !raw.config?.allowPaidGcpOverride) {
+            if (mergedServices.google_places) mergedServices.google_places.blockPaidCalls = true;
+            if (mergedServices.gemini_grounding_paid) mergedServices.gemini_grounding_paid.blockPaidCalls = true;
+            if (mergedServices.outscraper) mergedServices.outscraper.blockPaidCalls = false;
+          }
           return {
             date: today,
             config: {
               enabled: raw.config?.enabled ?? DEFAULT_CONFIG.enabled,
-              strictFreeMode: raw.config?.strictFreeMode ?? DEFAULT_CONFIG.strictFreeMode,
+              strictFreeMode: isStrict,
               services: mergedServices,
             },
             usage: raw.usage || {},
@@ -351,6 +367,25 @@ export class CostGuardService {
 
   public setCachedCnpj(cnpjClean: string, data: any, source: string): void {
     cnpjCache.set(cnpjClean, { data, source, timestamp: Date.now() });
+  }
+
+  // --- Business & Lead Search Cache (7-day TTL) to save 100% on repeated queries ---
+  public getCachedBusinessSearch(key: string): any | null {
+    const normKey = String(key || "").trim().toLowerCase();
+    const cached = businessSearchCache.get(normKey);
+    if (!cached) return null;
+    if (Date.now() - cached.timestamp > 7 * 86400000) {
+      businessSearchCache.delete(normKey);
+      return null;
+    }
+    this.metrics.cacheStats.aiDeduplicationHits += 1;
+    return cached.data;
+  }
+
+  public setCachedBusinessSearch(key: string, data: any): void {
+    const normKey = String(key || "").trim().toLowerCase();
+    if (!normKey) return;
+    businessSearchCache.set(normKey, { data, timestamp: Date.now() });
   }
 
   // --- Request Deduplication (Prevents parallel double-clicks from running duplicate AI tasks) ---

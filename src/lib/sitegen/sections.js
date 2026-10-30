@@ -36,8 +36,9 @@ export function titleWithAccent(ctx, key, fallback, accentKey) {
 
 export function brandMark(ctx) {
   const logo = ctx.logo;
-  if (logo && logo.url) return `<img class="brand-logo${logo.round ? " round" : ""}" src="${esc(logo.url)}" alt="${esc(ctx.b.name)}">`;
-  return `<span class="brand-dot"></span>`;
+  if (logo && logo.url)
+    return `<img class="brand-logo${logo.round ? " round" : ""}" src="${esc(logo.url)}" alt="${esc(ctx.b.name)}" data-logo-edit="1" title="Clique para trocar a logomarca" style="cursor:pointer">`;
+  return `<span class="brand-dot" data-logo-edit="1" title="Clique para adicionar a logomarca" style="cursor:pointer"></span>`;
 }
 
 export function header(ctx) {
@@ -49,7 +50,11 @@ export function header(ctx) {
 <header class="hdr">
   <div class="wrap hdr-in">
     <a href="#" class="brand" style="max-width:380px">
-      ${ctx.logo && ctx.logo.url ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}">` : `<span class="brand-seal">${initials(b.name)}</span>`}
+      ${
+        ctx.logo && ctx.logo.url
+          ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}" data-logo-edit="1" title="Clique para trocar a logomarca" style="cursor:pointer">`
+          : `<span class="brand-seal" data-logo-edit="1" title="Clique para enviar a logomarca" style="cursor:pointer">${initials(b.name)}</span>`
+      }
       ${
         hideName
           ? ""
@@ -59,11 +64,11 @@ export function header(ctx) {
       }
     </a>
     <nav>
-      <a href="#servicos">Serviços</a>
-      <a href="#autoridade">Sobre</a>
-      <a href="#avaliacoes">Avaliações</a>
-      <a href="#localizacao">Localização</a>
-      <a href="#faq">Dúvidas</a>
+      <a href="#servicos"${ed("nav.servicos")}>${esc(ctx.t("nav.servicos", "Serviços"))}</a>
+      <a href="#autoridade"${ed("nav.sobre")}>${esc(ctx.t("nav.sobre", "Sobre"))}</a>
+      <a href="#avaliacoes"${ed("nav.avaliacoes")}>${esc(ctx.t("nav.avaliacoes", "Avaliações"))}</a>
+      <a href="#localizacao"${ed("nav.localizacao")}>${esc(ctx.t("nav.localizacao", "Localização"))}</a>
+      <a href="#faq"${ed("nav.faq")}>${esc(ctx.t("nav.faq", "Dúvidas"))}</a>
     </nav>
     <div style="display:flex;align-items:center;gap:14px">
       ${btnHtml(ctx, "header_cta", "Chamar no WhatsApp", "btn-pri", `Olá! Vim pelo site da ${b.name} e gostaria de atendimento.`)}
@@ -77,17 +82,18 @@ export function header(ctx) {
 <header class="hdr">
   <div class="wrap hdr-in" style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center">
     <nav style="justify-content:flex-start">
-      <a href="#cardapio">Cardápio</a>
-      <a href="#sobre">Sobre</a>
-      <a href="#galeria">Fotos</a>
+      <a href="#cardapio"${ed("nav.cardapio")}>${esc(ctx.t("nav.cardapio", "Cardápio"))}</a>
+      <a href="#sobre"${ed("nav.sobre")}>${esc(ctx.t("nav.sobre", "Sobre"))}</a>
+      <a href="#galeria"${ed("nav.fotos")}>${esc(ctx.t("nav.fotos", "Fotos"))}</a>
     </nav>
     <a href="#" class="brand" style="justify-content:center;text-align:center;font-size:24px;font-weight:400">
+      ${ctx.logo && ctx.logo.url ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}" data-logo-edit="1" title="Clique para trocar a logomarca" style="cursor:pointer">` : ""}
       ${hideName ? "" : `<span${ed("brand.name")}>${esc(ctx.t("brand.name", b.name))}</span>`}
     </a>
     <div style="display:flex;align-items:center;justify-content:flex-end;gap:20px">
       <nav>
-        <a href="#avaliacoes">Avaliações</a>
-        <a href="#faq">Dúvidas</a>
+        <a href="#avaliacoes"${ed("nav.avaliacoes")}>${esc(ctx.t("nav.avaliacoes", "Avaliações"))}</a>
+        <a href="#faq"${ed("nav.faq")}>${esc(ctx.t("nav.faq", "Dúvidas"))}</a>
       </nav>
       ${btnHtml(ctx, "header_cta", "WhatsApp", "btn-pri", `Olá! Vim pelo site da ${b.name} e quero fazer uma encomenda.`)}
     </div>
@@ -101,14 +107,15 @@ export function header(ctx) {
 <header class="hdr">
   <div class="wrap hdr-in">
     <a href="#" class="brand" style="font-size:${isModa ? "22px" : "24px"};font-weight:${isModa ? "600" : "400"};letter-spacing:${isModa ? "-.02em" : ".03em"}">
+      ${ctx.logo && ctx.logo.url ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}" data-logo-edit="1" title="Clique para trocar a logomarca" style="cursor:pointer">` : ""}
       ${hideName ? "" : `<span${ed("brand.name")}>${esc(ctx.t("brand.name", b.name))}</span>`}
     </a>
     <nav>
-      <a href="${isModa ? "#catalogo" : "#especialidades"}">${isModa ? "Coleção" : "Serviços"}</a>
-      <a href="#sobre">Sobre</a>
-      <a href="#galeria">Fotos</a>
-      <a href="#avaliacoes">Avaliações</a>
-      <a href="#faq">Dúvidas</a>
+      <a href="${isModa ? "#catalogo" : "#especialidades"}"${ed("nav.item1")}>${esc(ctx.t("nav.item1", isModa ? "Coleção" : "Serviços"))}</a>
+      <a href="#sobre"${ed("nav.sobre")}>${esc(ctx.t("nav.sobre", "Sobre"))}</a>
+      <a href="#galeria"${ed("nav.fotos")}>${esc(ctx.t("nav.fotos", "Fotos"))}</a>
+      <a href="#avaliacoes"${ed("nav.avaliacoes")}>${esc(ctx.t("nav.avaliacoes", "Avaliações"))}</a>
+      <a href="#faq"${ed("nav.faq")}>${esc(ctx.t("nav.faq", "Dúvidas"))}</a>
     </nav>
     <div style="display:flex;align-items:center;gap:14px">
       ${btnHtml(ctx, "header_cta", "WhatsApp", "btn-pri", `Olá! Vim pelo site da ${b.name} e gostaria de atendimento.`)}
@@ -122,7 +129,11 @@ export function header(ctx) {
 <header class="hdr">
   <div class="wrap hdr-in">
     <a href="#" class="brand-exec">
-      ${ctx.logo && ctx.logo.url ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}">` : `<span class="logo-mark-exec">${initials(b.name)}</span>`}
+      ${
+        ctx.logo && ctx.logo.url
+          ? `<img class="brand-logo${ctx.logo.round ? " round" : ""}" src="${esc(ctx.logo.url)}" alt="${esc(b.name)}" data-logo-edit="1" title="Clique para trocar a logomarca" style="cursor:pointer">`
+          : `<span class="logo-mark-exec" data-logo-edit="1" title="Clique para enviar a logomarca" style="cursor:pointer">${initials(b.name)}</span>`
+      }
       ${
         hideName
           ? ""
@@ -132,10 +143,10 @@ export function header(ctx) {
       }
     </a>
     <nav>
-      <a href="#servicos">Soluções</a>
-      <a href="#autoridade">Sobre</a>
-      <a href="#avaliacoes">Avaliações</a>
-      <a href="#localizacao">Contato</a>
+      <a href="#servicos"${ed("nav.solucoes")}>${esc(ctx.t("nav.solucoes", "Soluções"))}</a>
+      <a href="#autoridade"${ed("nav.sobre")}>${esc(ctx.t("nav.sobre", "Sobre"))}</a>
+      <a href="#avaliacoes"${ed("nav.avaliacoes")}>${esc(ctx.t("nav.avaliacoes", "Avaliações"))}</a>
+      <a href="#localizacao"${ed("nav.contato")}>${esc(ctx.t("nav.contato", "Contato"))}</a>
     </nav>
     <div style="display:flex;align-items:center;gap:14px">
       ${btnHtml(ctx, "header_cta", "Falar no WhatsApp", "btn-acc", `Olá! Vim pelo site da ${b.name} e gostaria de atendimento.`)}
@@ -170,7 +181,7 @@ export function header(ctx) {
 <header class="hdr">
   <div class="wrap hdr-in">
     <a href="#" class="brand">${brandMark(ctx)}${hideName ? "" : `<span${ed("brand.name")}>${esc(ctx.t("brand.name", b.name))}</span>`}</a>
-    <nav>${anchors.map(([h, l]) => `<a href="${h}">${l}</a>`).join("")}</nav>
+    <nav>${anchors.map(([h, l], idx) => `<a href="${h}"${ed(`nav.link_${idx}`)}>${esc(ctx.t(`nav.link_${idx}`, l))}</a>`).join("")}</nav>
     <div style="display:flex;align-items:center;gap:16px;flex-shrink:0">
       ${arch !== "gastronomia" ? `<span class="hdr-city">${ICONS.mappin} ${esc(b.city)}${b.uf ? " · " + esc(b.uf) : ""}</span>` : ""}
       ${btnHtml(ctx, "header_cta", ctaLabel, arch === "servicos" ? "btn-pri" : "btn-acc", `Olá! Vim pelo site da ${b.name} e gostaria de atendimento.`)}
@@ -180,13 +191,8 @@ export function header(ctx) {
 }
 
 export function topbar(ctx) {
-  return `
-<div class="topbar"><div class="topbar-in">
-  <span>${ICONS.truck} Entrega rápida na região</span>
-  <span>${ICONS.percent} Desconto especial no Pix</span>
-  <span>${ICONS.card} Parcele em até 12x</span>
-  <span>${ICONS.shield} Garantia total da loja</span>
-</div></div>`;
+  // Removida faixa de topo promocional conforme solicitação
+  return "";
 }
 
 export function hero(ctx) {
@@ -437,20 +443,55 @@ export function hero(ctx) {
       <div><span class="n">${formatRating(b.rating)}</span><div class="rev-stars">${stars}</div></div>
       <div><small><b>${b.rating_count || "500+"} avaliações</b></small><small>no Google Meu Negócio</small></div>
     </div>`;
-  if (arch === "gastronomia") {
-    return `
-<section class="hero" id="inicio">
-  ${responsiveImgTag(ctx, "hero", "hero_mobile", b.photos[0] || "", b.name, "hero-bg")}
-  <div class="wrap hero-in">
-    <span class="eyebrow"${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", defaults.eyebrow))}</span>
-    <h1${ed("hero.title")}>${titleWithAccent(ctx, "hero.title", defaults.title, "hero.accent")}</h1>
-    <input type="hidden" data-accent="hero.accent" value="${esc(ctx.t("hero.accent", defaults.accent))}">
-    <p class="sub"${ed("hero.subtitle")}>${esc(ctx.t("hero.subtitle", defaults.sub))}</p>
-    <div class="hero-ctas">
-      ${btnHtml(ctx, "cta1", defaults.cta1, "btn-acc", `Olá! Vim pelo site da ${b.name} e quero fazer um pedido.`)}
-      <a href="#cardapio" class="btn btn-ghost bfx-lift" data-btn="cta2"><span${ed("hero.cta2")}>${esc(ctx.t("hero.cta2", defaults.cta2))}</span>${ICONS.arrowR}</a>
+  if (arch === "gastronomia" || ctx.heroLayout === "glass-box" || ctx.heroLayout === "overlay-dark" || ctx.heroLayout === "split") {
+    if (ctx.heroLayout === "split") {
+      return `
+<section class="hero" id="inicio" style="background:#140F0D;padding:56px 0">
+  <div class="wrap" style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:36px;align-items:center">
+    <div style="display:flex;flex-direction:column;gap:20px;align-items:flex-start;color:#fff">
+      <span class="eyebrow"${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", defaults.eyebrow))}</span>
+      <h1 style="color:#fff"${ed("hero.title")}>${titleWithAccent(ctx, "hero.title", defaults.title, "hero.accent")}</h1>
+      <input type="hidden" data-accent="hero.accent" value="${esc(ctx.t("hero.accent", defaults.accent))}">
+      <p class="sub" style="color:rgba(255,255,255,.86)"${ed("hero.subtitle")}>${esc(ctx.t("hero.subtitle", defaults.sub))}</p>
+      <div class="hero-ctas">
+        ${btnHtml(ctx, "cta1", defaults.cta1, "btn-acc", `Olá! Vim pelo site da ${b.name} e quero fazer um pedido.`)}
+        <a href="#cardapio" class="btn btn-ghost bfx-lift" style="color:#fff" data-btn="cta2"><span${ed("hero.cta2")}>${esc(ctx.t("hero.cta2", defaults.cta2))}</span>${ICONS.arrowR}</a>
+      </div>
+      <div class="hero-addr" style="color:rgba(255,255,255,.82)">${ICONS.mappin}<span${ed("hero.address")}>${esc(ctx.t("hero.address", b.address))}</span></div>
     </div>
-    <div class="hero-addr">${ICONS.mappin}<span${ed("hero.address")}>${esc(ctx.t("hero.address", b.address))}</span></div>
+    <div style="border-radius:24px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.45);border:2px solid rgba(255,255,255,.14);aspect-ratio:4/3;background:#000">
+      ${responsiveImgTag(ctx, "hero", "hero_mobile", b.photos[0] || "", b.name)}
+    </div>
+  </div>
+</section>`;
+    }
+
+    const extraOverlayStyle =
+      ctx.heroLayout === "overlay-dark"
+        ? `style="background:rgba(10,8,14,0.78);position:absolute;inset:0;z-index:1;pointer-events:none"`
+        : `style="background:linear-gradient(90deg,rgba(12,9,8,0.88) 0%,rgba(12,9,8,0.70) 52%,rgba(12,9,8,0.30) 100%);position:absolute;inset:0;z-index:1;pointer-events:none"`;
+
+    const copyBoxStyle =
+      ctx.heroLayout === "glass-box"
+        ? `style="position:relative;z-index:2;background:rgba(15,12,10,0.78);backdrop-filter:blur(12px);padding:32px;border-radius:24px;border:1px solid rgba(255,255,255,0.16);max-width:680px;box-shadow:0 20px 50px rgba(0,0,0,0.45)"`
+        : `style="position:relative;z-index:2;max-width:680px;text-shadow:0 2px 14px rgba(0,0,0,0.65)"`;
+
+    return `
+<section class="hero" id="inicio" style="position:relative">
+  ${responsiveImgTag(ctx, "hero", "hero_mobile", b.photos[0] || "", b.name, "hero-bg")}
+  <div ${extraOverlayStyle}></div>
+  <div class="wrap hero-in" style="position:relative;z-index:2">
+    <div ${copyBoxStyle}>
+      <span class="eyebrow"${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", defaults.eyebrow))}</span>
+      <h1${ed("hero.title")}>${titleWithAccent(ctx, "hero.title", defaults.title, "hero.accent")}</h1>
+      <input type="hidden" data-accent="hero.accent" value="${esc(ctx.t("hero.accent", defaults.accent))}">
+      <p class="sub"${ed("hero.subtitle")}>${esc(ctx.t("hero.subtitle", defaults.sub))}</p>
+      <div class="hero-ctas">
+        ${btnHtml(ctx, "cta1", defaults.cta1, "btn-acc", `Olá! Vim pelo site da ${b.name} e quero fazer um pedido.`)}
+        <a href="#cardapio" class="btn btn-ghost bfx-lift" data-btn="cta2"><span${ed("hero.cta2")}>${esc(ctx.t("hero.cta2", defaults.cta2))}</span>${ICONS.arrowR}</a>
+      </div>
+      <div class="hero-addr">${ICONS.mappin}<span${ed("hero.address")}>${esc(ctx.t("hero.address", b.address))}</span></div>
+    </div>
   </div>
   ${badge}
 </section>`;
@@ -533,6 +574,8 @@ function itemCard(ctx, it, i, labelBtn) {
   const fx = cfg.effect || "lift";
   const btnStyle = cfg.color ? ` style="background:${esc(cfg.color)};color:#fff"` : "";
   const im = ctx.img(`item_${i}`, it.image);
+  const rawDesc = String(it.description || "");
+  const cardDesc = rawDesc.length > 165 ? `${rawDesc.slice(0, 155).trim()}...` : rawDesc;
 
   return `
 <article class="card-item" data-cat="${esc(it.category)}" data-top="${it.badge ? "1" : "0"}" data-reveal>
@@ -542,7 +585,7 @@ function itemCard(ctx, it, i, labelBtn) {
   </div>
   <div class="card-body">
     <h3${ed(`item.${i}.name`)}>${esc(it.name)}</h3>
-    <p${ed(`item.${i}.description`)}>${esc(it.description)}</p>
+    <p${ed(`item.${i}.description`)}>${esc(cardDesc)}</p>
     <div class="card-foot">
       <span class="price"${ed(`item.${i}.price`)}>${esc(it.price)}</span>
       <a class="card-order bfx-${fx}" href="${waLink(b, msg)}" target="_blank" rel="noopener" data-wa data-btn="${btnId}"${btnStyle}>${ICONS.whatsapp}<span>${esc(finalLabel)}</span></a>
@@ -674,9 +717,17 @@ export function featureChips(b) {
 
 export function gallery(ctx) {
   const { b, templateId } = ctx;
-  const products = b.items.map((i, idx) => ctx.img(`item_${idx}`, i.image).url);
-  const spaceSlots = [0, 1, 2, 3].map((idx) => ctx.img(`gallery_${idx}`, b.photos[idx] || b.photos[idx % Math.max(1, b.photos.length)] || "").url).filter(Boolean);
+  const rawProducts = b.items.map((i, idx) => ctx.img(`item_${idx}`, i.image).url).filter(Boolean);
+  const spaceSlots = [0, 1, 2, 3, 4, 5]
+    .map((idx) => ctx.img(`gallery_${idx}`, b.photos[idx] || b.photos[idx % Math.max(1, b.photos.length)] || rawProducts[idx % Math.max(1, rawProducts.length)] || "").url)
+    .filter(Boolean);
   const space = spaceSlots.length ? spaceSlots : b.photos;
+  const products =
+    rawProducts.length >= 6
+      ? rawProducts.slice(0, 6)
+      : [0, 1, 2, 3, 4, 5]
+          .map((idx) => rawProducts[idx] || space[idx % Math.max(1, space.length)] || rawProducts[idx % Math.max(1, rawProducts.length)] || "")
+          .filter(Boolean);
 
   if (templateId.startsWith("zycron-")) {
     const allPhotos = [...new Set([...space, ...products])].slice(0, 8);
@@ -691,7 +742,7 @@ export function gallery(ctx) {
       .map(
         (u, idx) => `
     <div class="zycron-rail-item">
-      <img src="${esc(u)}" alt="Foto ${idx + 1}" loading="lazy"${idx < 4 ? eimg(`gallery_${idx}`) : ""}>
+      <img src="${esc(u)}" alt="Foto ${idx + 1}" loading="lazy"${idx < 6 ? eimg(`gallery_${idx}`) : ""}>
       <span class="zycron-rail-badge">${idx + 1}/${allPhotos.length}</span>
     </div>`
       )
@@ -712,7 +763,7 @@ export function gallery(ctx) {
     <button class="pill" data-gal="espaco">Nosso Espaço</button>
   </div>
   <div class="gal" data-galprod>${products.slice(0, 6).map((u, idx) => `<figure><img src="${esc(u)}" alt="Destaque" loading="lazy"${eimg(`item_${idx}`)}></figure>`).join("")}</div>
-  <div class="gal" data-galesp style="display:none">${space.slice(0, 6).map((u, idx) => `<figure><img src="${esc(u)}" alt="Nosso espaço" loading="lazy"${idx < 4 ? eimg(`gallery_${idx}`) : ""}></figure>`).join("")}</div>
+  <div class="gal" data-galesp style="display:none">${space.slice(0, 6).map((u, idx) => `<figure><img src="${esc(u)}" alt="Nosso espaço" loading="lazy"${eimg(`gallery_${idx}`)}></figure>`).join("")}</div>
 </div>
 <div class="lightbox" data-lightbox><button data-lbclose aria-label="Fechar">${ICONS.x}</button><img src="" alt="Foto ampliada"></div>
 </section>`;
@@ -767,6 +818,8 @@ export function bento(ctx) {
         const msg = cfg.waMessage || `Olá! Vim pelo site da ${b.name} e gostaria de orçamento para: ${it.name}`;
         const style = cfg.color ? ` style="background:${esc(cfg.color)};color:#fff;border-color:${esc(cfg.color)}"` : "";
         const im = ctx.img(`item_${i}`, it.image);
+        const rawValDesc = String(it.description || "");
+        const cardValDesc = rawValDesc.length > 165 ? `${rawValDesc.slice(0, 155).trim()}...` : rawValDesc;
         return `
     <article class="service-card-val" data-reveal>
       <div class="service-media-val" title="Clique para trocar a foto deste serviço">
@@ -775,7 +828,7 @@ export function bento(ctx) {
       </div>
       <div class="service-body-val">
         <h3${ed(`item.${i}.name`)}>${esc(it.name)}</h3>
-        <p${ed(`item.${i}.description`)}>${esc(it.description)}</p>
+        <p${ed(`item.${i}.description`)}>${esc(cardValDesc)}</p>
         <div class="service-foot-val">
           <span class="service-tag-val"${ed(`item.${i}.price`)}>${esc(it.price || it.category || "Sob medida")}</span>
           <a class="discover-val" href="${waLink(b, msg)}" target="_blank" rel="noopener" data-wa data-btn="${btnId}"${style} title="Pedir orçamento no WhatsApp">→</a>
@@ -832,6 +885,8 @@ export function bento(ctx) {
         const msg = cfg.waMessage || `Olá! Vim pelo site da ${b.name} e quero saber mais sobre: ${it.name}`;
         const style = cfg.color ? ` style="color:${esc(cfg.color)}"` : "";
         const im = ctx.img(`item_${i}`, it.image);
+        const rawExecDesc = String(it.description || "");
+        const cardExecDesc = rawExecDesc.length > 165 ? `${rawExecDesc.slice(0, 155).trim()}...` : rawExecDesc;
         return `
     <article class="card-exec" data-reveal>
       <div>
@@ -840,7 +895,7 @@ export function bento(ctx) {
         </div>
         <span class="tag-exec"${ed(`item.${i}.badge`)}>DESTAQUE 0${i + 1}${it.badge ? ` · ${esc(it.badge)}` : ""}</span>
         <h3${ed(`item.${i}.name`)}>${esc(it.name)}</h3>
-        <p${ed(`item.${i}.description`)}>${esc(it.description)}</p>
+        <p${ed(`item.${i}.description`)}>${esc(cardExecDesc)}</p>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid rgba(18,45,42,.08)">
         <span class="price" style="font-size:16px"${ed(`item.${i}.price`)}>${esc(it.price)}</span>

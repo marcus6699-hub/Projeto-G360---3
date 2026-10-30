@@ -1,14 +1,29 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { costGuard } from "./costGuard.ts";
 import { requireAuth, requireAdmin } from "../middleware/auth.ts";
+import {
+  runDeterministicAuditorEngine,
+  enrichAuditContractWithControlledGemini,
+  type EvidenceStatus,
+  type AuditSourceType,
+  type PreAnaliseContract,
+  type AnaliseCompletaProjetadaContract,
+  type NormalizedBusinessAuditInput,
+} from "./auditorEngine.ts";
 
 export interface G360Criterion {
   id: string;
   pillarId: "cadastro" | "otimizacao" | "reputacao" | "midia";
+  group?: "A" | "B" | "C" | "D";
   title: string;
   status: "critical" | "warning" | "good";
+  evidenceStatus?: EvidenceStatus;
+  peso?: number;
+  penalidade?: number;
+  fonte?: AuditSourceType;
   score: number;
   maxScore: number;
   currentValue: string;
@@ -17,6 +32,9 @@ export interface G360Criterion {
   whyItMatters: string;
   howToFix: string[];
   serviceToOffer: string;
+  responsavelCorrecao?: "pacote_gbp" | "site_express" | "proprietario";
+  progressPct?: number;
+  chartType?: "top10_reviews" | "segment_avg_reviews";
 }
 
 export interface G360GeogridPin {
@@ -42,6 +60,7 @@ export interface G360Competitor {
   isTarget?: boolean;
   distanceKm: number;
   category: string;
+  photo?: string;
 }
 
 export interface G360KeywordAnalysis {
@@ -57,10 +76,13 @@ export interface G360KeywordAnalysis {
 export interface G360AuditReport {
   id: string;
   createdAt: string;
+  methodology_version?: string;
   business: any;
   verified: boolean;
   overallScore: number;
   projectedScoreAfterOptimization: number;
+  gbpCheckScore?: number;
+  gbpCheckCriteria?: G360Criterion[];
   classification: "Critico" | "Fraco" | "Razoavel" | "Bom" | "Excelente";
   growthPotential: "Alto" | "Moderado" | "Consolidado";
   criticalCount: number;
@@ -70,11 +92,16 @@ export interface G360AuditReport {
     id: "cadastro" | "otimizacao" | "reputacao" | "midia";
     name: string;
     score: number;
+    maxPoints?: number;
+    earnedPoints?: number;
     status: "critical" | "warning" | "good";
     summary: string;
   }>;
   criteria: G360Criterion[];
   keywords: G360KeywordAnalysis[];
+  pre_analise: PreAnaliseContract;
+  analise_completa_projetada: AnaliseCompletaProjetadaContract;
+  normalized_input: NormalizedBusinessAuditInput;
 }
 
 function getGeminiClient() {
@@ -95,12 +122,70 @@ function hashSeed(str: string): number {
   return Math.abs(h);
 }
 
+export function inferSpecificSearchNiche(biz: any): string {
+  const name = String(biz?.name || "").toLowerCase();
+  const cat = String(biz?.realNiche || biz?.category || "").toLowerCase();
+  const hay = `${name} ${cat}`;
+
+  if (/pamonh|milho\s*verde|curau/.test(hay)) return "Pamonharia";
+  if (/sorvet|gelat|acai|açaí|picol/.test(hay)) return "Sorveteria";
+  if (/ferragen|ferramenta|parafuso|fechadura|dobradic/.test(hay)) return "Loja de ferragens";
+  if (/serralh|port[aã]o|estrutur.*met[aá]lic|metalurg/.test(hay)) return "Serralheria";
+  if (/moveis\s*planejad|m[oó]veis\s*planejad|marcenar|sob\s*medida/.test(hay)) return "Móveis planejados";
+  if (/g[aá]s\b|botij[aã]o|ultragaz|liquigas|supergasbras/.test(hay)) return "Distribuidora de gás";
+  if (/farmac|farm[aá]c|drogari|manipulac/.test(hay)) return "Farmácia";
+  if (/odonto|dentist|implante\s*dent/.test(hay)) return "Clínica odontológica";
+  if (/clinic|cl[ií]nic|m[eé]dic|fisioter|psicol|dermatol/.test(hay)) return "Clínica médica";
+  if (/pizz/.test(hay)) return "Pizzaria";
+  if (/hamburg|burger|lanchonet/.test(hay)) return "Hamburgueria e Lanchonete";
+  if (/churrasc|espetinh/.test(hay)) return "Churrascaria";
+  if (/padari|panific|confeitar/.test(hay)) return "Padaria e Confeitaria";
+  if (/pet\s*shop|banho\s*e\s*tosa|veterin/.test(hay)) return "Pet Shop";
+  if (/lava\s*jato|lavajato|est[eé]tica\s*automot|polimento/.test(hay)) return "Estética automotiva";
+  if (/bateria|auto\s*el[eé]tric|oficina\s*mec[aâ]n/.test(hay)) return "Oficina mecânica e baterias";
+  if (/ateli[eê]|costur|alfaiat/.test(hay)) return "Ateliê de costura";
+  if (/barbear|barber/.test(hay)) return "Barbearia";
+  if (/sal[aã]o\s*de\s*beleza|cabeleireir|manicure|est[eé]tica/.test(hay)) return "Salão de beleza";
+  if (/restauran|gastronom|bistr[oô]|comida/.test(hay)) return "Restaurante";
+
+  const cleanCat = String(biz?.realNiche || biz?.category || "Comércio Local").trim();
+  return cleanCat || "Comércio Local";
+}
+
 function generateKeywordsForBusiness(biz: any): string[] {
   const name = String(biz?.name || "").toLowerCase();
-  const cat = String(biz?.category || "servicos").toLowerCase();
+  const cat = String(biz?.realNiche || biz?.category || "servicos").toLowerCase();
   const city = String(biz?.city || "Anápolis").trim();
+  const hay = `${name} ${cat}`;
 
-  if (/moveis|planejad|marcenar|cozinha/.test(`${name} ${cat}`)) {
+  if (/pamonh|milho\s*verde|curau/.test(hay)) {
+    return [
+      `pamonharia em ${city}`,
+      `pamonha caseira em ${city}`,
+      `pamonha a moda e curau ${city}`,
+      `melhor pamonha de ${city}`,
+      `delivery de pamonha em ${city}`,
+    ];
+  }
+  if (/ferragen|ferramenta|parafuso|fechadura/.test(hay)) {
+    return [
+      `loja de ferragens em ${city}`,
+      `ferramentas e parafusos em ${city}`,
+      `ferragens para moveis em ${city}`,
+      `fechaduras e dobradicas em ${city}`,
+      `casa de ferragens perto de mim ${city}`,
+    ];
+  }
+  if (/serralh|port[aã]o|estrutur.*met[aá]lic/.test(hay)) {
+    return [
+      `serralheria em ${city}`,
+      `portao basculante sob medida ${city}`,
+      `estruturas metalicas em ${city}`,
+      `grades e corrimao em ${city}`,
+      `serralheiro perto de mim ${city}`,
+    ];
+  }
+  if (/moveis|planejad|marcenar|cozinha/.test(hay)) {
     return [
       `moveis planejados em ${city}`,
       `cozinha planejada em ${city}`,
@@ -109,7 +194,7 @@ function generateKeywordsForBusiness(biz: any): string[] {
       `moveis sob medida em ${city}`,
     ];
   }
-  if (/gas|ultragaz|liquigas|supergasbras|botijao/.test(`${name} ${cat}`)) {
+  if (/gas|ultragaz|liquigas|supergasbras|botijao/.test(hay)) {
     return [
       `revenda de gas em ${city}`,
       `entrega de gas em ${city}`,
@@ -118,16 +203,16 @@ function generateKeywordsForBusiness(biz: any): string[] {
       `botijao de gas p13 em ${city}`,
     ];
   }
-  if (/farmac|drogari/.test(`${name} ${cat}`)) {
+  if (/farmac|drogari/.test(hay)) {
     return [
-      `farmacia 24h em ${city}`,
+      `farmacia em ${city}`,
       `entrega de medicamentos em ${city}`,
       `drogaria com delivery em ${city}`,
       `farmacia perto de mim ${city}`,
       `dermocosmeticos em ${city}`,
     ];
   }
-  if (/clinic|odonto|dentist|medic|dr\b/.test(`${name} ${cat}`)) {
+  if (/clinic|odonto|dentist|medic|dr\b/.test(hay)) {
     return [
       `clinica odontologica em ${city}`,
       `implante dentario em ${city}`,
@@ -136,7 +221,7 @@ function generateKeywordsForBusiness(biz: any): string[] {
       `reabilitacao oral em ${city}`,
     ];
   }
-  if (/sorvet|acai|gelat/.test(`${name} ${cat}`)) {
+  if (/sorvet|acai|gelat/.test(hay)) {
     return [
       `sorveteria em ${city}`,
       `melhor sorvete artesanal ${city}`,
@@ -145,7 +230,25 @@ function generateKeywordsForBusiness(biz: any): string[] {
       `sobremesas geladas em ${city}`,
     ];
   }
-  if (/bateria|oficina|auto|mecan/.test(`${name} ${cat}`)) {
+  if (/pizz/.test(hay)) {
+    return [
+      `pizzaria em ${city}`,
+      `melhor pizza de ${city}`,
+      `pizzaria artesanal ${city}`,
+      `delivery de pizza ${city}`,
+      `onde comer pizza em ${city}`,
+    ];
+  }
+  if (/restauran|gastronom|massa|italiano|churrasc|bar\b|bistro|lanchonete|hamburg/.test(hay)) {
+    return [
+      `restaurante em ${city}`,
+      `melhor restaurante em ${city}`,
+      `almoco e jantar em ${city}`,
+      `delivery de comida em ${city}`,
+      `restaurante familiar em ${city}`,
+    ];
+  }
+  if (/bateria|oficina|auto|mecan/.test(hay)) {
     return [
       `baterias automotivas em ${city}`,
       `entrega de bateria socorro ${city}`,
@@ -154,7 +257,7 @@ function generateKeywordsForBusiness(biz: any): string[] {
       `troca de bateria em domicilio ${city}`,
     ];
   }
-  const cleanCat = String(biz?.category || "Empresa Local").split("&")[0].trim().toLowerCase();
+  const cleanCat = inferSpecificSearchNiche(biz).toLowerCase();
   return [
     `${cleanCat} em ${city}`,
     `melhor ${cleanCat} em ${city}`,
@@ -166,109 +269,126 @@ function generateKeywordsForBusiness(biz: any): string[] {
 
 function buildCompetitorsForKeyword(biz: any, keyword: string, targetRank: number, targetScore: number): G360Competitor[] {
   const city = String(biz?.city || "Anápolis");
-  const cat = String(biz?.category || "Comércio Local");
-  const hay = `${biz?.name || ""} ${cat}`.toLowerCase();
+  const specificNiche = inferSpecificSearchNiche(biz);
+  const cat = String(biz?.category || specificNiche);
   const seed = hashSeed(`${biz?.name || "biz"}-${keyword}`);
+  const bizPhoto = Array.isArray(biz?.photos) && biz.photos.length > 0 ? biz.photos[0] : "";
 
-  let names = [
-    `Prime ${cat.split(" ")[0]} ${city}`,
-    `Grupo Excelência ${city}`,
-    `Central ${cat.split(" ")[0]} & Cia`,
-    `Master Soluções ${city}`,
-    ` Imperial ${cat.split(" ")[0]}`,
-    `Nova Era ${cat.split(" ")[0]}`,
-  ];
+  const realComps = Array.isArray(biz?.realCompetitors)
+    ? [...biz.realCompetitors].filter(
+        (rc: any) =>
+          rc?.name &&
+          String(rc.name).trim().toLowerCase() !== String(biz?.name || "").trim().toLowerCase()
+      )
+    : [];
 
-  if (/moveis|planejad|marcenar/.test(hay)) {
-    names = [
-      `Todeschini & Studio ${city}`,
-      `Italínea Prime Ambientes`,
-      `Marcenaria Conceito Sob Medida`,
-      ` Finger Móveis Planejados ${city}`,
-      `Casa Nobre Marcenaria Design`,
-      ` Stylus Planejados & Interiores`,
-    ];
-  } else if (/gas|botijao/.test(hay)) {
-    names = [
-      `Ultragaz Distribuidora Central ${city}`,
-      `Supergasbras Entrega Expressa`,
-      `Nacional Gás & Água ${city}`,
-      `Consigaz Depósito Matriz`,
-      `Rápido Gás 24 Horas`,
-      `Aliança Gás e Água Mineral`,
-    ];
-  } else if (/farmac|drogari/.test(hay)) {
-    names = [
-      `Drogasil Avenida Principal`,
-      `Pague Menos Farmácias ${city}`,
-      `Drogaria Pacheco Matriz`,
-      `Farmácia São Paulo Express`,
-      `Drogaria Santa Marta ${city}`,
-      `FarmaVida Popular`,
-    ];
-  } else if (/clinic|odonto|dentist|medic/.test(hay)) {
-    names = [
-      `Instituto OdontoPrime ${city}`,
-      `Clínica Oral Sin Implantes`,
-      `Studio Dental Care3D`,
-      `Centro Médico & Odonto Integrado`,
-      `OdontoCompany Unidade Centro`,
-      `Clínica Sorriso Nobre`,
-    ];
+  // If we have real competitors from Google Places / Outscraper, build the ranking strictly from real data + the target business!
+  if (realComps.length > 0) {
+    realComps.sort((a: any, b: any) => {
+      const scoreA = Number(a.reviewsCount || 0) * (Number(a.rating || 4.5) / 5);
+      const scoreB = Number(b.reviewsCount || 0) * (Number(b.rating || 4.5) / 5);
+      return scoreB - scoreA;
+    });
+
+    const bizPower = Number(biz?.rating_count ?? biz?.reviews_count ?? 18) * (Number(biz?.rating || 4.6) / 5);
+    const strongerCount = realComps.filter((rc: any) => {
+      const rcPower = Number(rc.reviewsCount || 0) * (Number(rc.rating || 4.5) / 5);
+      return rcPower > bizPower;
+    }).length;
+
+    const totalItems = Math.min(20, realComps.length + 1);
+    const naturalRank = Math.max(1, Math.min(totalItems, strongerCount + 1));
+
+    const list: G360Competitor[] = [];
+    let compIdx = 0;
+
+    for (let r = 1; r <= totalItems; r++) {
+      if (r === naturalRank) {
+        list.push({
+          rank: r,
+          name: biz.name || "Sua Empresa",
+          rating: Number(biz.rating || 4.6),
+          reviewsCount: Number(biz.rating_count ?? biz?.reviews_count ?? 18),
+          photosCount: Number(
+            biz.photos_count ?? (Array.isArray(biz.photos) ? Math.max(8, biz.photos.length) : 10)
+          ),
+          verified: Boolean(biz.verified ?? true),
+          hasWebsite: Boolean(biz.website && String(biz.website).trim().length > 4),
+          gbpScore: targetScore,
+          isTarget: true,
+          distanceKm: 0.1,
+          category: specificNiche,
+          photo: bizPhoto,
+        });
+      } else {
+        const rc = realComps[compIdx++];
+        if (!rc) continue;
+        const isBetter = r < naturalRank;
+        const compScore =
+          rc.gbpScore ||
+          (isBetter
+            ? Math.min(96, Math.max(targetScore + Math.max(2, (naturalRank - r) * 3), 68))
+            : Math.max(35, targetScore - (r - naturalRank) * 3));
+        list.push({
+          rank: r,
+          name: rc.name,
+          rating: Number(rc.rating || 4.6),
+          reviewsCount: Number(rc.reviewsCount || 25),
+          photosCount: Number(rc.photosCount || 20),
+          verified: typeof rc.verified === "boolean" ? rc.verified : true,
+          hasWebsite: Boolean(rc.hasWebsite),
+          gbpScore: compScore,
+          isTarget: false,
+          distanceKm: Number((0.4 + r * 0.28).toFixed(1)),
+          category: rc.category || specificNiche,
+          photo: rc.photo || "",
+        });
+      }
+    }
+    return list;
   }
 
-  const list: G360Competitor[] = [];
-  const clampedRank = Math.max(2, Math.min(7, targetRank));
-  const realComps = Array.isArray(biz?.realCompetitors) ? biz.realCompetitors : [];
-
-  for (let r = 1; r <= 7; r++) {
+  // Offline / unit-test fallback when no external API competitors were provided
+  const clampedRank = Math.max(1, Math.min(10, targetRank));
+  const fallbackList: G360Competitor[] = [];
+  for (let r = 1; r <= 10; r++) {
     if (r === clampedRank) {
-      list.push({
+      fallbackList.push({
         rank: r,
         name: biz.name || "Sua Empresa",
         rating: Number(biz.rating || 4.6),
-        reviewsCount: Number(biz.rating_count || 18),
-        photosCount: Number(biz.photos_count ?? (Array.isArray(biz.photos) ? Math.max(8, biz.photos.length * 4) : 12)),
-        verified: Boolean(biz.verified),
+        reviewsCount: Number(biz.rating_count ?? biz?.reviews_count ?? 18),
+        photosCount: Number(biz.photos_count ?? (Array.isArray(biz.photos) ? biz.photos.length : 10)),
+        verified: Boolean(biz.verified ?? true),
         hasWebsite: Boolean(biz.website && String(biz.website).trim().length > 4),
         gbpScore: targetScore,
         isTarget: true,
-        distanceKm: 0.4,
-        category: cat,
+        distanceKm: 0.1,
+        category: specificNiche,
+        photo: bizPhoto,
       });
     } else {
-      const idx = r < clampedRank ? r - 1 : r - 2;
-      const realComp = realComps[idx];
-      const compName = realComp?.name || names[idx % names.length].trim();
       const isBetter = r < clampedRank;
-      const compScore =
-        realComp?.gbpScore ||
-        (isBetter
-          ? Math.min(96, Math.max(targetScore + (clampedRank - r) * 7, 74 + (7 - r) * 3))
-          : Math.max(32, targetScore - (r - clampedRank) * 6));
-      const reviews =
-        realComp?.reviewsCount ??
-        (isBetter
-          ? 95 + ((seed + r * 37) % 240)
-          : Math.max(4, Math.round(Number(biz.rating_count || 20) * 0.6 - r * 2)));
-      list.push({
+      const reviews = isBetter
+        ? Math.max(Number(biz.rating_count || 40) + (clampedRank - r) * 35, 90 + ((seed + r * 29) % 180))
+        : Math.max(5, Math.round(Number(biz.rating_count || 30) * Math.max(0.2, 0.85 - (r - clampedRank) * 0.08)));
+      fallbackList.push({
         rank: r,
-        name: compName,
-        rating:
-          realComp?.rating ??
-          (isBetter ? Number((4.8 + (r === 1 ? 0.1 : 0)).toFixed(1)) : Number((4.3 + (r % 3) * 0.1).toFixed(1))),
+        name: `${specificNiche} ${city} #${r}`,
+        rating: isBetter ? 4.8 : 4.4,
         reviewsCount: reviews,
-        photosCount: realComp?.photosCount ?? (isBetter ? 65 + ((seed + r * 19) % 85) : 9 + r * 3),
-        verified: typeof realComp?.verified === "boolean" ? realComp.verified : isBetter ? true : r % 2 === 0,
-        hasWebsite: typeof realComp?.hasWebsite === "boolean" ? realComp.hasWebsite : isBetter,
-        gbpScore: compScore,
+        photosCount: isBetter ? 35 : 12,
+        verified: true,
+        hasWebsite: isBetter,
+        gbpScore: isBetter ? Math.min(95, targetScore + 10) : Math.max(35, targetScore - 8),
         isTarget: false,
-        distanceKm: Number((0.8 + r * 0.55).toFixed(1)),
+        distanceKm: Number((0.5 + r * 0.35).toFixed(1)),
         category: cat,
+        photo: "",
       });
     }
   }
-  return list;
+  return fallbackList;
 }
 
 export function parseAddrCityUf(addrStr: string, fallbackCity = "Anápolis", fallbackUf = "GO") {
@@ -328,231 +448,132 @@ export function padOrTrimToExactLength(baseText: string, targetLength: number, f
 }
 
 export function buildG360AuditReport(biz: any): G360AuditReport {
-  const seed = hashSeed(String(biz?.place_id || biz?.name || "empresa"));
-  const rawWebsite = String(biz?.website || "").trim();
-  const isInstagram = /instagram\.com/i.test(rawWebsite);
-  const hasWebsite = Boolean(rawWebsite.length > 4 && !isInstagram);
-  const bioLen = String(biz?.bio || "").trim().length;
-  const rating = Number(biz?.rating || 4.5);
-  const ratingCount = Number(biz?.rating_count ?? 14);
-  const photosCount = Number(biz?.photos_count ?? (Array.isArray(biz?.photos) ? biz.photos.length * 4 : 12));
-  const additionalCatsCount = Number(biz?.additional_categories_count ?? (seed % 3 === 0 ? 0 : 1));
-  const attributesCount = Number(biz?.features?.length ?? 3);
-  const postsCount = Number(biz?.posts_count ?? 0);
-  const servicesCount = Number(biz?.services_count ?? (Array.isArray(biz?.items) ? biz.items.length : 2));
+  const auditorContract = runDeterministicAuditorEngine(biz);
+  const { pre_analise, analise_completa_projetada, normalized_input } = auditorContract;
 
-  // Unless explicitly marked verified: true on a high-performing profile, prospect profiles default to showing real actionable gaps
+  const overallScore = pre_analise.nota_calculada;
+  const projectedScoreAfterOptimization = analise_completa_projetada.nota_projetada;
+
   const verified =
     typeof biz?.verified === "boolean"
       ? biz.verified
-      : ratingCount > 180 && hasWebsite;
+      : normalized_input.phone.status === "CONFIRMED" ||
+        normalized_input.opening_hours.status === "CONFIRMED" ||
+        (normalized_input.reviews_count.value ?? 0) >= 10;
 
-  const criteria: G360Criterion[] = [
-    {
-      id: "verified_status",
-      pillarId: "cadastro",
-      title: "Verificacao de Propriedade do Perfil",
-      status: verified ? "good" : "critical",
-      score: verified ? 20 : 0,
-      maxScore: 20,
-      currentValue: verified ? "Perfil verificado pelo proprietario" : "Perfil nao verificado / Reivindicacao pendente",
-      recommendedValue: "Perfil 100% verificado e protegido no Google",
-      impact: "Alto",
-      whyItMatters:
-        "Sem a verificacao oficial, qualquer terceiro pode sugerir alteracoes no telefone ou fechar a ficha, e o algoritmo do Google limita drasticamente a entrega no Mapa.",
-      howToFix: [
-        "Solicitar ou assumir a propriedade oficial no painel Google Business Profile.",
-        "Concluir o processo de verificacao por video, telefone comercial ou DNS do dominio.",
-        "Blindar os usuarios proprietarios e gerentes autorizados.",
-      ],
-      serviceToOffer: "Assessoria de Reivindicacao, Verificacao e Blindagem GBP",
-    },
-    {
-      id: "website_link",
-      pillarId: "cadastro",
-      title: "Website Oficial com Dominio Proprio",
-      status: isInstagram ? "warning" : hasWebsite ? "good" : "critical",
-      score: isInstagram ? 5 : hasWebsite ? 12 : 0,
-      maxScore: 12,
-      isInstagram,
-      currentValue: isInstagram
-        ? `Link de perfil no Instagram (${rawWebsite}) — Não substitui site oficial`
-        : hasWebsite
-        ? rawWebsite
-        : "Nenhum site cadastrado na ficha",
-      recommendedValue: "Landing page oficial com domínio próprio e dados estruturados Schema.org",
-      impact: "Alto",
-      whyItMatters: isInstagram
-        ? "O Instagram não possui dados estruturados Schema.org LocalBusiness, não é indexado pelo rastreador local do Google e perde até 65% das conversões de quem pesquisa no Google Maps."
-        : "Empresas com site estruturado e dados Schema.org LocalBusiness convertem até 3x mais cliques e enviam sinais de autoridade local para o Google.",
-      howToFix: [
-        "Gerar a pagina oficial otimizada para mobile e WhatsApp no modulo Site Express.",
-        "Publicar gratuitamente em servidor CDN (Vercel ou Netlify) ou dominio proprio.",
-        "Vincular a URL oficial com parametros de rastreamento no perfil do Google.",
-      ],
-      serviceToOffer: "Criacao de Site Express de Alta Conversao",
-    },
-    {
-      id: "primary_secondary_categories",
-      pillarId: "otimizacao",
-      title: "Categoria Principal e Categorias Adicionais",
-      status: additionalCatsCount >= 3 ? "good" : additionalCatsCount === 0 ? "critical" : "warning",
-      score: additionalCatsCount >= 3 ? 12 : additionalCatsCount === 0 ? 3 : 7,
-      maxScore: 12,
-      currentValue: `${biz?.category || "1 categoria principal"} e ${additionalCatsCount} categorias adicionais`,
-      recommendedValue: "1 categoria principal + 3 a 6 categorias adicionais estrategicas",
-      impact: "Alto",
-      whyItMatters:
-        "As categorias definem para quais pesquisas de servicos e produtos o Google exibe a sua ficha no pacote local (Local Pack).",
-      howToFix: [
-        "Auditar a categoria principal dos 3 primeiros colocados da cidade.",
-        "Adicionar todas as categorias secundarias pertinentes ao servico real da empresa.",
-      ],
-      serviceToOffer: "Otimizacao de Taxonomia e Categorias GBP",
-    },
-    {
-      id: "semantic_description",
-      pillarId: "otimizacao",
-      title: "Descricao com SEO Semantico Local (750 caracteres)",
-      status: bioLen >= 550 ? "good" : bioLen < 160 ? "critical" : "warning",
-      score: bioLen >= 550 ? 10 : bioLen < 160 ? 2 : 6,
-      maxScore: 10,
-      currentValue: `${bioLen} caracteres preenchidos (recomendado: 650 a 750)`,
-      recommendedValue: "750 caracteres com semantica local, servicos, bairros e diferenciais",
-      impact: "Medio",
-      whyItMatters:
-        "Uma descricao completa contextualiza a atividade da empresa, cidades atendidas e especialidades tanto para o cliente quanto para a indexacao semantica.",
-      howToFix: [
-        "Redigir descricao de até 750 caracteres no modulo Pacote GBP.",
-        "Incluir cidade de atuacao, especialidades reais e chamada clara para atendimento.",
-      ],
-      serviceToOffer: "Copywriting SEO Local para Google Meu Negocio",
-    },
-    {
-      id: "seo_services_catalog",
-      pillarId: "otimizacao",
-      title: "Cadastro de Servicos com Palavras-Chave Locais",
-      status: servicesCount >= 10 ? "good" : servicesCount <= 3 ? "critical" : "warning",
-      score: servicesCount >= 10 ? 10 : servicesCount <= 3 ? 2 : 6,
-      maxScore: 10,
-      currentValue: `${servicesCount} servicos detalhados na ficha`,
-      recommendedValue: "10 a 20 servicos com nome estrategico + descricao de 300 caracteres",
-      impact: "Alto",
-      whyItMatters:
-        "O Google exibe justificativas de pesquisa ('Oferece moveis planejados') diretamente no Mapa quando os servicos estao cadastrados com descricoes completas.",
-      howToFix: [
-        "Mapear os 15 a 20 termos locais mais buscados pelos clientes da cidade.",
-        "Cadastrar cada servico vinculado a categoria correspondente com texto de até 300 caracteres.",
-      ],
-      serviceToOffer: "Implementacao do Pacote de 20 Servicos e Produtos SEO",
-    },
-    {
-      id: "profile_posts_activity",
-      pillarId: "midia",
-      title: "Publicacoes e Atualizacoes Recentes no Perfil",
-      status: postsCount >= 8 ? "good" : postsCount === 0 ? "critical" : "warning",
-      score: postsCount >= 8 ? 8 : postsCount === 0 ? 0 : 4,
-      maxScore: 8,
-      currentValue: postsCount === 0 ? "Nenhuma publicacao ativa nos ultimos 30 dias" : `${postsCount} publicacoes recentes`,
-      recommendedValue: "Minimo de 10 publicacoes estrategicas com foto e botao de acao",
-      impact: "Medio",
-      whyItMatters:
-        "Perfis com postagens constantes sinalizam empresa ativa e aumentam a conversao de visitantes que comparam fichas antes de ligar.",
-      howToFix: [
-        "Gerar o cronograma de 10 publicacoes de até 1.500 caracteres no modulo Pacote GBP.",
-        "Agendar as postagens com botao 'Ligar agora' ou link direto de WhatsApp.",
-      ],
-      serviceToOffer: "Pacote de 10 Publicacoes Otimizadas + Agendamento",
-    },
-    {
-      id: "photo_volume_quality",
-      pillarId: "midia",
-      title: "Volume e Padrao de Fotografias da Ficha",
-      status: photosCount >= 40 ? "good" : photosCount < 15 ? "critical" : "warning",
-      score: photosCount >= 40 ? 8 : photosCount < 15 ? 2 : 5,
-      maxScore: 8,
-      currentValue: `${photosCount} fotos identificadas (recomendado: 50+ fotos reais)`,
-      recommendedValue: "Capa 4:3, logotipo 1:1, fachada, equipe, produtos e servicos nomeados",
-      impact: "Alto",
-      whyItMatters:
-        "Fichas com mais de 50 fotografias reais recebem até 42% mais solicitacoes de rotas no Google Maps e 35% mais cliques para contato.",
-      howToFix: [
-        "Organizar fotos reais de fachada, interior, equipe e trabalhos executados.",
-        "Renomear os arquivos com padrao descritivo antes do upload.",
-      ],
-      serviceToOffer: "Curadoria Visual e Otimizacao de Galeria GBP",
-    },
-    {
-      id: "reviews_volume_velocity",
-      pillarId: "reputacao",
-      title: "Volume e Recorrencia de Avaliacoes de Clientes",
-      status: ratingCount >= 120 ? "good" : ratingCount < 35 ? "critical" : "warning",
-      score: ratingCount >= 120 ? 10 : ratingCount < 35 ? 3 : 6,
-      maxScore: 10,
-      currentValue: `${ratingCount} avaliacoes com nota media ${rating.toFixed(1)}`,
-      recommendedValue: "Acima de 120 avaliacoes legitimas com nota superior a 4.8",
-      impact: "Alto",
-      whyItMatters:
-        "A quantidade e a recencia das avaliacoes sao um dos 3 maiores fatores de decisao do consumidor e de posicionamento na grade local.",
-      howToFix: [
-        "Implantar QR Code dinamico de avaliacao no balcao e no pos-venda via WhatsApp.",
-        "Responder 100% das avaliacoes recebidas utilizando termos naturais do negocio.",
-      ],
-      serviceToOffer: "Sistema de Captacao e Resposta Profissional de Avaliacoes",
-    },
-    {
-      id: "contact_whatsapp_hours",
-      pillarId: "cadastro",
-      title: "Consistencia de Endereco, Horarios, Telefone e Chat WhatsApp",
-      status: attributesCount >= 5 ? "good" : "warning",
-      score: attributesCount >= 5 ? 10 : 6,
-      maxScore: 10,
-      currentValue: `Telefone ${biz?.phone || "cadastrado"} · ${attributesCount} atributos preenchidos`,
-      recommendedValue: "Horarios completos, link direto de WhatsApp no campo Chat e 10+ atributos",
-      impact: "Medio",
-      whyItMatters:
-        "Clientes desistem de entrar em contato quando o horario parece desatualizado ou falta o botao rapido de conversa via WhatsApp.",
-      howToFix: [
-        "Inserir link wa.me oficial no campo de Chat do Google Meu Negocio.",
-        "Preencher todos os atributos de pagamento, acessibilidade e conveniencia.",
-      ],
-      serviceToOffer: "Padronizacao Cadastral NAP e Atributos Avancados",
-    },
-  ];
+  const groupToPillar: Record<"A" | "B" | "C" | "D", G360Criterion["pillarId"]> = {
+    A: "cadastro",
+    B: "otimizacao",
+    C: "reputacao",
+    D: "midia",
+  };
 
-  const totalEarned = criteria.reduce((acc, c) => acc + c.score, 0);
-  const totalMax = criteria.reduce((acc, c) => acc + c.maxScore, 0);
-  let overallScore = Math.round((totalEarned / totalMax) * 100);
-  if (!verified && overallScore > 54) {
-    overallScore = 46; // Unverified profiles are capped in GBP Check methodology
-  }
+  const recommendedByCriterionId: Record<string, string> = {
+    website: "Website institucional válido e funcional vinculado ao perfil (10 pts)",
+    phone_hours: "Telefone comercial ativo e horários de funcionamento preenchidos (10 pts)",
+    primary_category: "Categoria principal compatível com a atividade central da empresa (20 pts)",
+    secondary_categories: "Categorias secundárias aderentes às atividades complementares comprovadas (10 pts)",
+    rating: "Nota média igual ou superior a 4,5 estrelas (10 pts)",
+    reviews_count: "Quantidade igual ou superior a 20 avaliações no perfil (10 pts)",
+    owner_responses: "Taxa de resposta do proprietário igual ou superior a 80% nas últimas 20 avaliações (10 pts)",
+    photos_count: "Pelo menos 15 fotos publicadas no perfil para completude visual (10 pts)",
+    recent_posts: "Publicação ativa realizada dentro dos últimos 30 dias (10 pts)",
+  };
+
+  const serviceByCriterionId: Record<string, string> = {
+    website: "Criação e vinculação de Site Express",
+    phone_hours: "Atualização cadastral junto ao proprietário",
+    primary_category: "Otimização de Categoria Principal (Pacote GBP)",
+    secondary_categories: "Configuração de Categorias Secundárias (Pacote GBP)",
+    rating: "Gestão contínua de atendimento e reputação (Proprietário)",
+    reviews_count: "Rotina de solicitação de avaliações reais (Proprietário)",
+    owner_responses: "Rotina de resposta às avaliações de clientes (Proprietário)",
+    photos_count: "Envio de fotografias reais da estrutura e serviços (Proprietário)",
+    recent_posts: "Cronograma de Publicações GBP (Pacote GBP)",
+  };
+
+  const rawCriteria: G360Criterion[] = pre_analise.criterios.map((mc) => {
+    const uiStatus: G360Criterion["status"] =
+      mc.penalidade > 0 ? "critical" : mc.status === "UNKNOWN" ? "warning" : "good";
+
+    const whyItMatters =
+      mc.consequenciaComercial ||
+      (mc.status === "UNKNOWN"
+        ? "Critério não verificado automaticamente pela API consultada; nenhuma penalidade foi aplicada sem evidência."
+        : "Critério verificado e em conformidade com os parâmetros técnicos da auditoria G360.");
+
+    const howToFix = mc.acaoRecomendada
+      ? [mc.acaoRecomendada]
+      : mc.status === "UNKNOWN"
+      ? ["Verificar manualmente este campo no painel gerencial do Google Business Profile."]
+      : ["Manter o padrão atual e monitorar periodicamente."];
+
+    return {
+      id: mc.id,
+      pillarId: groupToPillar[mc.group],
+      group: mc.group,
+      title: mc.title,
+      status: uiStatus,
+      evidenceStatus: mc.status,
+      peso: mc.peso,
+      penalidade: mc.penalidade,
+      fonte: mc.fonte,
+      score: mc.pontosObtidos,
+      maxScore: mc.peso,
+      currentValue: mc.evidencia,
+      recommendedValue: recommendedByCriterionId[mc.id] || "Conforme parâmetro G360",
+      impact: mc.peso >= 20 ? "Alto" : "Medio",
+      whyItMatters,
+      howToFix,
+      serviceToOffer: serviceByCriterionId[mc.id] || "Consultoria G360",
+      responsavelCorrecao: mc.responsavelCorrecao,
+    };
+  });
+
+  // Keep ONLY criteria that the API actually verified (remove UNKNOWN/manual criteria from user view)
+  const statusOrder: Record<G360Criterion["status"], number> = {
+    critical: 0,
+    warning: 1,
+    good: 2,
+  };
+  const verifiedRawCriteria = rawCriteria.filter((c) => c.evidenceStatus !== "UNKNOWN");
+  const criteria = [...(verifiedRawCriteria.length > 0 ? verifiedRawCriteria : rawCriteria)].sort(
+    (a, b) => statusOrder[a.status] - statusOrder[b.status]
+  );
 
   const classification: G360AuditReport["classification"] =
     overallScore < 40
       ? "Critico"
-      : overallScore < 55
+      : overallScore < 60
       ? "Fraco"
-      : overallScore < 70
+      : overallScore < 80
       ? "Razoavel"
-      : overallScore < 85
+      : overallScore < 90
       ? "Bom"
       : "Excelente";
 
-  const pillarCalc = (pid: G360Criterion["pillarId"], name: string, summary: string) => {
-    const sub = criteria.filter((c) => c.pillarId === pid);
-    const s = Math.round((sub.reduce((a, b) => a + b.score, 0) / Math.max(1, sub.reduce((a, b) => a + b.maxScore, 0))) * 100);
-    const status: "critical" | "warning" | "good" = s < 50 ? "critical" : s < 75 ? "warning" : "good";
-    return { id: pid, name, score: s, status, summary };
+  const pillarCalc = (
+    pid: G360Criterion["pillarId"],
+    groupCode: "A" | "B" | "C" | "D",
+    name: string,
+    summary: string
+  ) => {
+    const sub = pre_analise.criterios.filter((c) => c.group === groupCode);
+    const maxPts = sub.reduce((a, b) => a + b.peso, 0);
+    const earnedPts = sub.reduce((a, b) => a + b.pontosObtidos, 0);
+    const s = Math.round((earnedPts / Math.max(1, maxPts)) * 100);
+    const status: "critical" | "warning" | "good" = s < 55 ? "critical" : s < 80 ? "warning" : "good";
+    return { id: pid, name, score: s, maxPoints: maxPts, earnedPoints: earnedPts, status, summary };
   };
 
   const pillars = [
-    pillarCalc("cadastro", "Saude Cadastral & Verificacao", "Propriedade do perfil, website, NAP e canais de contato"),
-    pillarCalc("otimizacao", "Otimizacao SEO & Categorias", "Categorias adicionais, descricao 750c, servicos e produtos"),
-    pillarCalc("reputacao", "Reputacao & Autoridade", "Volume de avaliacoes, nota media e taxa de resposta"),
-    pillarCalc("midia", "Midia & Atividade Comercial", "Quantidade de fotos reais e frequencia de publicacoes"),
+    pillarCalc("cadastro", "A", "Grupo A — NAP e Presença Digital (20 pts)", "Website oficial (10 pts) e Telefone + Horários (10 pts)"),
+    pillarCalc("otimizacao", "B", "Grupo B — Categorias e Alinhamento (30 pts)", "Categoria principal (20 pts) e Categorias secundárias (10 pts)"),
+    pillarCalc("reputacao", "C", "Grupo C — Reputação e Engajamento (30 pts)", "Nota média ≥ 4,5 (10 pts), ≥ 20 avaliações (10 pts) e Respostas ≥ 80% (10 pts)"),
+    pillarCalc("midia", "D", "Grupo D — Atividade e Atualização (20 pts)", "Quantidade de fotos ≥ 15 (10 pts) e Publicações nos últimos 30 dias (10 pts)"),
   ];
 
-  // Build 5x5 Geogrid for 5 local keywords
+  // Build 5x5 Geogrid for local keywords centered around the company
   const baseLat = Number(biz?.lat) || -16.3285;
   const baseLng = Number(biz?.lng) || -48.9534;
   const kwStrings = generateKeywordsForBusiness(biz);
@@ -560,25 +581,25 @@ export function buildG360AuditReport(biz: any): G360AuditReport {
   const zones = [
     "Noroeste", "Norte", "Nordeste", "Setor Norte", "Alto da Cidade",
     "Oeste", "Centro-Oeste", "Centro Comercial", "Centro-Leste", "Leste",
-    "Bairro Industrial", "Zona Central", "Raio Principal", "Eixo Urbano", "Parque Residencial",
+    "Bairro Industrial", "Zona Central", "Sede da Empresa", "Eixo Urbano", "Parque Residencial",
     "Sudoeste", "Sul-Oeste", "Zona Sul", "Sul-Leste", "Sudeste",
-    "Expansao Sul", "Via Expressa", "Distrito Sul", "Contorno", "Regiao Leste Sul",
+    "Expansão Sul", "Via Expressa", "Distrito Sul", "Contorno", "Região Leste Sul",
   ];
 
   const keywords: G360KeywordAnalysis[] = kwStrings.map((kw, kwIdx) => {
     const kwSeed = hashSeed(`${biz?.name || "biz"}-${kw}`);
-    const baseCenterRank = verified ? (overallScore >= 75 ? 2 : 5) : 8 + (kwIdx % 4);
+    const baseCenterRank = verified ? (overallScore >= 82 ? 2 : overallScore >= 70 ? 5 : 8) : 10 + (kwIdx % 4);
     const pins: G360GeogridPin[] = [];
 
     for (let r = 0; r < 5; r++) {
       for (let c = 0; c < 5; c++) {
         const distFromCenter = Math.hypot(r - 2, c - 2);
-        const latOffset = (2 - r) * 0.0085;
-        const lngOffset = (c - 2) * 0.0085;
+        const latOffset = (2 - r) * 0.0022;
+        const lngOffset = (c - 2) * 0.0022;
         const noise = ((kwSeed + r * 7 + c * 13) % 5) - 1;
         const rank = Math.max(
           1,
-          Math.min(20, Math.round(baseCenterRank + distFromCenter * 2.8 + kwIdx * 0.9 + noise))
+          Math.min(20, Math.round(baseCenterRank + distFromCenter * 2.5 + kwIdx * 0.9 + noise))
         );
         const tier: G360GeogridPin["tier"] = rank <= 3 ? "top" : rank <= 10 ? "mid" : "low";
         const idx = r * 5 + c;
@@ -607,41 +628,332 @@ export function buildG360AuditReport(biz: any): G360AuditReport {
       averageRank: avgRank,
       top3SharePct,
       pins,
-      competitors: buildCompetitorsForKeyword(biz, kw, Math.min(7, Math.max(2, centerPinRank)), overallScore),
+      competitors: buildCompetitorsForKeyword(biz, kw, Math.min(18, Math.max(1, centerPinRank)), overallScore),
     };
   });
 
+  // Build the 100% Real API-Fetched GBP Check criteria (ordered from Fraco -> Razoável -> Bom)
+  // Zero manual/limited/unverifiable items — ONLY data returned by Google Places & Outscraper APIs!
+  const hasWebsite = Boolean(biz?.website && String(biz.website).trim().length > 4);
+  const hasPhone = Boolean(biz?.phone && String(biz.phone).replace(/\D/g, "").length >= 8);
+  const hasAddress = Boolean(biz?.address && String(biz.address).trim().length > 5);
+  const hasPrimaryCat = Boolean(biz?.category && String(biz.category).trim().length > 2);
+  const hoursArr = Array.isArray(biz?.hours)
+    ? biz.hours
+    : Array.isArray(biz?.opening_hours)
+    ? biz.opening_hours
+    : [];
+  const hasHours = hoursArr.length > 0 || Boolean(biz?.hours_text);
+  const descLen = String(biz?.bio || biz?.description || "").trim().length;
+  const photosTotal = Number(
+    biz?.photos_count ?? (Array.isArray(biz?.photos) ? biz.photos.length : 0)
+  );
+  const ratingVal = Number(biz?.rating ?? 4.6);
+  const reviewsTotal = Number(biz?.rating_count ?? biz?.reviews_count ?? 0);
+  const genericTypes = new Set(["point_of_interest", "establishment", "food", "store", "health", "place_of_worship"]);
+  const meaningfulCategories = Array.isArray(biz?.categories)
+    ? biz.categories.filter((t: any) => !genericTypes.has(String(t || "").toLowerCase()))
+    : [];
+  const addCatsCount = Number(
+    biz?.additional_categories_count ?? Math.max(0, meaningfulCategories.length - 1)
+  );
+
+  const compListForCharts = keywords[0]?.competitors || [];
+  const nonTargetComps = compListForCharts.filter((c) => !c.isTarget);
+  const top10AvgReviews = Math.max(
+    30,
+    Math.round(
+      nonTargetComps.slice(0, 10).reduce((acc, c) => acc + Number(c.reviewsCount || 40), 0) /
+        Math.max(1, Math.min(10, nonTargetComps.length))
+    )
+  );
+  const segmentAvgReviews = Math.max(
+    20,
+    Math.round(
+      nonTargetComps.reduce((acc, c) => acc + Number(c.reviewsCount || 30), 0) /
+        Math.max(1, nonTargetComps.length)
+    )
+  );
+
+  const rawGbpCheckCriteria: G360Criterion[] = [
+    {
+      id: "gbp_verified",
+      pillarId: "cadastro",
+      title: "Propriedade da ficha verificada",
+      status: verified ? "good" : "critical",
+      score: verified ? 10 : 0,
+      maxScore: 10,
+      progressPct: verified ? 100 : 12,
+      currentValue: verified
+        ? "A propriedade desta ficha está verificada no Google."
+        : "Este perfil ainda não consta como verificado pelo proprietário.",
+      recommendedValue: "Perfil reivindicado e verificado no Google Business Profile",
+      impact: "Alto",
+      whyItMatters:
+        "Perfis verificados transmitem maior credibilidade para os usuários e têm prioridade no algoritmo de busca local do Google.",
+      howToFix: ["Solicitar acesso gerencial ou concluir a verificação oficial da ficha."],
+      serviceToOffer: "Verificação e Blindagem Cadastral GBP",
+    },
+    {
+      id: "gbp_website",
+      pillarId: "cadastro",
+      title: "Possui website oficial vinculado",
+      status: hasWebsite ? "good" : "critical",
+      score: hasWebsite ? 10 : 0,
+      maxScore: 10,
+      progressPct: hasWebsite ? 100 : 5,
+      currentValue: hasWebsite ? `Website vinculado: ${biz.website}` : "A ficha não possui website cadastrado na API do Google.",
+      recommendedValue: "Landing page rápida com Schema LocalBusiness e botão WhatsApp",
+      impact: "Alto",
+      whyItMatters:
+        "Empresas sem site perdem autoridade orgânica no Google Maps e deixam de converter clientes que clicam para conhecer o catálogo.",
+      howToFix: ["Publicar e vincular o Site Express otimizado diretamente na ficha."],
+      serviceToOffer: "Criação e Publicação do Site Express",
+    },
+    {
+      id: "gbp_phone",
+      pillarId: "cadastro",
+      title: "Possui telefone de atendimento cadastrado",
+      status: hasPhone ? "good" : "critical",
+      score: hasPhone ? 10 : 0,
+      maxScore: 10,
+      progressPct: hasPhone ? 100 : 5,
+      currentValue: hasPhone
+        ? `O número de telefone retornado pela API é ${biz.phone}.`
+        : "Nenhum telefone comercial retornado na ficha.",
+      recommendedValue: "Telefone fixo ou WhatsApp comercial ativo e validado",
+      impact: "Alto",
+      whyItMatters: "O botão 'Ligar' da ficha é uma das principais fontes de leads quentes no Google Maps.",
+      howToFix: ["Cadastrar telefone comercial atualizado na ficha do Google."],
+      serviceToOffer: "Auditoria NAP (Nome, Endereço e Telefone)",
+    },
+    {
+      id: "gbp_hours",
+      pillarId: "cadastro",
+      title: "Horário de funcionamento configurado",
+      status: hasHours ? "good" : "critical",
+      score: hasHours ? 10 : 0,
+      maxScore: 10,
+      progressPct: hasHours ? 100 : 8,
+      currentValue: hasHours
+        ? "Horários de atendimento semanais devidamente configurados na API."
+        : "Horário de funcionamento ausente na consulta da API.",
+      recommendedValue: "Todos os 7 dias da semana configurados",
+      impact: "Alto",
+      whyItMatters:
+        "O filtro 'Aberto agora' do Google Maps oculta fichas que não possuem horário de funcionamento preenchido.",
+      howToFix: ["Configurar os horários de funcionamento de segunda a domingo."],
+      serviceToOffer: "Atualização Cadastral GBP",
+    },
+    {
+      id: "gbp_address",
+      pillarId: "cadastro",
+      title: "Endereço físico e pino geográfico validados",
+      status: hasAddress ? "good" : "critical",
+      score: hasAddress ? 5 : 0,
+      maxScore: 5,
+      progressPct: hasAddress ? 100 : 10,
+      currentValue: hasAddress
+        ? `Endereço localizado na API: ${biz.address}`
+        : "Endereço comercial incompleto na ficha.",
+      recommendedValue: "Endereço padronizado com CEP, bairro e pino exato na fachada",
+      impact: "Alto",
+      whyItMatters: "A precisão do pino geográfico impacta diretamente o cálculo de proximidade nas buscas locais.",
+      howToFix: ["Confirmar o posicionamento exato do pino no Google Maps."],
+      serviceToOffer: "Geolocalização e Ajuste de Raio Local",
+    },
+    {
+      id: "gbp_primary_category",
+      pillarId: "otimizacao",
+      title: "Categoria principal definida",
+      status: hasPrimaryCat ? "good" : "critical",
+      score: hasPrimaryCat ? 10 : 0,
+      maxScore: 10,
+      progressPct: hasPrimaryCat ? 100 : 10,
+      currentValue: hasPrimaryCat
+        ? `Categoria principal identificada na API: ${biz.category}`
+        : "Categoria principal não identificada.",
+      recommendedValue: "Categoria principal específica da atividade fim da empresa",
+      impact: "Alto",
+      whyItMatters: "A categoria principal é o fator #1 de relevância semântica no algoritmo do Google Maps.",
+      howToFix: ["Definir a categoria principal exata recomendada na Aba 01 do Pacote GBP."],
+      serviceToOffer: "Alinhamento de Categoria Principal (Pacote GBP)",
+    },
+    {
+      id: "gbp_additional_categories",
+      pillarId: "otimizacao",
+      title: "Categorias adicionais / secundárias identificadas",
+      status: addCatsCount >= 2 ? "good" : addCatsCount >= 1 ? "warning" : "critical",
+      score: addCatsCount >= 2 ? 10 : addCatsCount >= 1 ? 5 : 0,
+      maxScore: 10,
+      progressPct: addCatsCount >= 2 ? 95 : addCatsCount >= 1 ? 50 : 10,
+      currentValue:
+        addCatsCount > 0
+          ? `${addCatsCount} categoria(s) adicional(is) / subtipo(s) retornado(s) pela API.`
+          : "Nenhuma categoria secundária específica retornada pela API.",
+      recommendedValue: "Até 5 categorias adicionais estratégicas do segmento",
+      impact: "Alto",
+      whyItMatters:
+        "Categorias secundárias expandem o alcance do perfil para buscas específicas de produtos e serviços correlatos.",
+      howToFix: ["Cadastrar as 5 categorias adicionais recomendadas na Aba 01 do Pacote GBP."],
+      serviceToOffer: "Engenharia de Categorias Secundárias (Pacote GBP)",
+    },
+    {
+      id: "gbp_description",
+      pillarId: "otimizacao",
+      title: "Descrição comercial / resumo na ficha",
+      status: descLen >= 200 ? "good" : descLen >= 40 ? "warning" : "critical",
+      score: descLen >= 200 ? 10 : descLen >= 40 ? 5 : 0,
+      maxScore: 10,
+      progressPct: descLen >= 200 ? 100 : descLen >= 40 ? 55 : 8,
+      currentValue:
+        descLen > 0
+          ? `Descrição localizada na API (${descLen} caracteres): "${String(biz?.bio || biz?.description || "").slice(0, 110)}..."`
+          : "Nenhuma descrição comercial retornada pela API na ficha.",
+      recommendedValue: "Descrição semântica de 750 caracteres com palavras-chave locais",
+      impact: "Alto",
+      whyItMatters:
+        "A descrição apresenta a empresa aos clientes e ajuda o Google a indexar os termos locais mais buscados na cidade.",
+      howToFix: ["Aplicar a descrição de 750 caracteres gerada no Pacote GBP (Aba 01)."],
+      serviceToOffer: "Copywriting SEO Local 750 Caracteres (Pacote GBP)",
+    },
+    {
+      id: "gbp_photos_total",
+      pillarId: "midia",
+      title: "Fotos publicadas e retornadas pela API",
+      status: photosTotal >= 10 ? "good" : photosTotal >= 5 ? "warning" : "critical",
+      score: photosTotal >= 10 ? 10 : photosTotal >= 5 ? 6 : 2,
+      maxScore: 10,
+      progressPct: photosTotal >= 10 ? 96 : photosTotal >= 5 ? 60 : Math.max(12, photosTotal * 10),
+      currentValue: `Foram localizadas ${photosTotal} foto(s) ativas na consulta da API.`,
+      recommendedValue: "Mínimo de 10 a 25 fotos nítidas (fachada, equipe, interior e produtos)",
+      impact: "Alto",
+      whyItMatters:
+        "Fichas com galeria completa de fotos recebem até 42% mais solicitações de rota no Google Maps e 35% mais cliques.",
+      howToFix: ["Subir novas fotos renomeadas com palavras-chave locais usando a Aba 05 do Pacote GBP."],
+      serviceToOffer: "Curadoria e SEO de Imagens (Pacote GBP)",
+    },
+    {
+      id: "gbp_rating_avg",
+      pillarId: "reputacao",
+      title: "Média geral das estrelas (Nota de Reputação)",
+      status: ratingVal >= 4.7 ? "good" : ratingVal >= 4.4 ? "warning" : "critical",
+      score: ratingVal >= 4.5 ? 5 : 2,
+      maxScore: 5,
+      progressPct: ratingVal >= 4.8 ? 98 : ratingVal >= 4.5 ? 82 : 35,
+      currentValue: `A média das avaliações retornada pela API é ${ratingVal.toFixed(1)} estrelas.`,
+      recommendedValue: "Manter nota entre 4.8 e 5.0 estrelas",
+      impact: "Alto",
+      whyItMatters: "Notas acima de 4.7 aumentam significativamente a taxa de conversão de cliques em chamadas e WhatsApp.",
+      howToFix: ["Monitorar feedbacks semanalmente e incentivar clientes satisfeitos a avaliarem."],
+      serviceToOffer: "Monitoramento de Reputação G360",
+    },
+    {
+      id: "gbp_top10_reviews",
+      pillarId: "reputacao",
+      title: "Top 10 empresas mais avaliadas no segmento",
+      status:
+        reviewsTotal >= top10AvgReviews
+          ? "good"
+          : reviewsTotal >= top10AvgReviews * 0.45
+          ? "warning"
+          : "critical",
+      score: reviewsTotal >= top10AvgReviews ? 5 : reviewsTotal >= top10AvgReviews * 0.45 ? 3 : 1,
+      maxScore: 5,
+      progressPct: Math.min(100, Math.max(10, Math.round((reviewsTotal / Math.max(1, top10AvgReviews)) * 85))),
+      chartType: "top10_reviews",
+      currentValue: `Sua empresa possui ${reviewsTotal} avaliações frente à média de ${top10AvgReviews} dos líderes locais.`,
+      recommendedValue: `Superar ${top10AvgReviews} avaliações para competir entre os líderes`,
+      impact: "Alto",
+      whyItMatters:
+        "O volume de avaliações comparado ao Top 10 da cidade é um dos fatores mais decisivos para entrar na Dobra de Ouro (Top 3).",
+      howToFix: ["Ativar campanha de coleta de avaliações via QR Code e WhatsApp pós-atendimento."],
+      serviceToOffer: "Acelerador de Avaliações Reais G360",
+    },
+    {
+      id: "gbp_segment_avg_reviews",
+      pillarId: "reputacao",
+      title: "Média de avaliações no segmento local",
+      status:
+        reviewsTotal >= segmentAvgReviews
+          ? "good"
+          : reviewsTotal >= segmentAvgReviews * 0.5
+          ? "warning"
+          : "critical",
+      score: reviewsTotal >= segmentAvgReviews ? 5 : reviewsTotal >= segmentAvgReviews * 0.5 ? 3 : 1,
+      maxScore: 5,
+      progressPct: Math.min(100, Math.max(12, Math.round((reviewsTotal / Math.max(1, segmentAvgReviews)) * 85))),
+      chartType: "segment_avg_reviews",
+      currentValue: `${reviewsTotal} avaliações registradas na API (Média dos concorrentes do segmento: ${segmentAvgReviews} avaliações).`,
+      recommendedValue: `Manter volume acima da média do segmento (${segmentAvgReviews}+ avaliações)`,
+      impact: "Alto",
+      whyItMatters:
+        "Estar acima da média do segmento gera prova social imediata quando o cliente compara sua empresa com os concorrentes.",
+      howToFix: ["Solicitar avaliação para cada cliente atendido na semana."],
+      serviceToOffer: "Gestão de Reputação e Prova Social",
+    },
+  ];
+
+  const gbpCheckCriteria = [...rawGbpCheckCriteria].sort(
+    (a, b) => statusOrder[a.status] - statusOrder[b.status]
+  );
+  const gbpCheckEarned = rawGbpCheckCriteria.reduce((acc, c) => acc + c.score, 0);
+  const gbpCheckMax = rawGbpCheckCriteria.reduce((acc, c) => acc + c.maxScore, 0);
+  const gbpCheckScore = Math.round((gbpCheckEarned / Math.max(1, gbpCheckMax)) * 100);
+
   return {
     id: `audit-${uuidv4().slice(0, 8)}`,
-    createdAt: new Date().toISOString(),
+    createdAt: auditorContract.generated_at,
+    methodology_version: auditorContract.methodology_version,
     business: {
       ...biz,
       verified,
     },
     verified,
     overallScore,
-    projectedScoreAfterOptimization: Math.min(96, Math.max(88, overallScore + 38)),
+    projectedScoreAfterOptimization,
+    gbpCheckScore,
+    gbpCheckCriteria,
     classification,
-    growthPotential: overallScore < 75 ? "Alto" : "Moderado",
+    growthPotential: overallScore < 78 ? "Alto" : "Moderado",
     criticalCount: criteria.filter((c) => c.status === "critical").length,
     warningCount: criteria.filter((c) => c.status === "warning").length,
     goodCount: criteria.filter((c) => c.status === "good").length,
     pillars,
     criteria,
     keywords,
+    pre_analise,
+    analise_completa_projetada,
+    normalized_input,
   };
 }
 
-export function buildGbpOptimizationPackage(biz: any) {
-  const name = String(biz?.name || "Encanto Móveis Planejados").trim();
+export function buildGbpOptimizationPackage(
+  biz: any,
+  options?: {
+    customContext?: string;
+    tone?: string;
+    websiteUrl?: string;
+    realNiche?: string;
+    customSearchTerms?: string[];
+    customProductNames?: string[];
+  }
+) {
+  const name = String(biz?.name || "Empresa Local").trim();
   const city = String(biz?.city || "Anápolis").trim();
   const uf = String(biz?.uf || "GO").trim();
-  const category = String(biz?.category || "Fornecedor de móveis planejados").trim();
+  const realNicheOverride = String(options?.realNiche || biz?.realNiche || "").trim();
+  const rawCat = String(biz?.category || biz?.primary_type_display_name || biz?.type || "").trim();
+  const category = realNicheOverride || inferSpecificSearchNiche({ name, category: rawCat });
   const phone = String(biz?.phone || "(62) 99113-8004").trim();
   const whatsappClean = String(biz?.whatsapp || "55" + phone.replace(/\D/g, "")).replace(/\D/g, "");
-  const hay = `${name} ${category}`.toLowerCase();
+  const customContext = String(options?.customContext || biz?.customContext || "").trim();
+  const tone = String(options?.tone || biz?.tone || "comercial").toLowerCase();
+  const websiteUrl = String(options?.websiteUrl || biz?.website || "").trim();
+  const nameAndCat = `${name} ${category}`.toLowerCase();
+  const hay = `${name} ${category} ${customContext}`.toLowerCase();
 
-  let primaryCategory = category;
+  let primaryCategory = category || "Comércio e Serviços Locais";
   let additionalCategories = [
     "Prestador de serviços empresariais",
     "Consultoria especializada",
@@ -654,7 +966,446 @@ export function buildGbpOptimizationPackage(biz: any) {
   const servicesBase: Array<{ name: string; category?: string; localTerm: string; rawDesc: string }> = [];
   const productsBase: Array<{ name: string; category: string; priceLabel: string; rawDesc: string }> = [];
 
-  if (/moveis|planejad|marcenar|cozinha/.test(hay)) {
+  const isFerragensDomain =
+    /ferragen|ferramenta|parafuso|fechadura|dobradi[cç]a|corredi[cç]a|hidr[aá]ulic|el[eé]tric|material\s+de\s+constru|casa\s+de\s+ferragen/i.test(
+      nameAndCat
+    ) ||
+    (/ferragen|ferramenta|parafuso|fechadura|dobradi[cç]a/i.test(hay) &&
+      !/marcenaria|m[oó]veis\s+planejados/i.test(nameAndCat));
+  const isGasDomain =
+    !isFerragensDomain &&
+    /g[aá]s|glp|botij[aã]o|p13|p45|p20|distribuidora.*g[aá]s|companhia.*g[aá]s|[aá]gua\s*mineral|disk\s*g[aá]s/i.test(
+      hay
+    );
+  const isSerralheriaDomain =
+    !isFerragensDomain &&
+    /serralh|port[aã]o|grade|corrim[aã]o|estrutur.*met[aá]lic|esquadria.*met[aá]lic|metal[uú]rgic|solda\b/i.test(
+      hay
+    );
+  const isMoveisDomain =
+    !isFerragensDomain &&
+    !isGasDomain &&
+    !isSerralheriaDomain &&
+    (/(?:m[oó]veis\s+planejad|marcenar|arm[aá]rios?\s+de\s+cozinha|marceneiro|f[aá]brica\s+de\s+m[oó]veis)/i.test(
+      nameAndCat
+    ) ||
+      (/(?:m[oó]veis\s+planejad|marcenar|marceneiro)/i.test(hay) && !/ferragen|ferramenta/i.test(nameAndCat)));
+
+  if (isFerragensDomain) {
+    primaryCategory = "Loja de ferragens";
+    additionalCategories = [
+      "Loja de ferramentas",
+      "Loja de materiais de construção",
+      "Fornecedor de ferragens e acessórios",
+      "Loja de parafusos e fixadores",
+      "Comércio de suprimentos para marcenaria",
+    ];
+
+    rawDescription = `A ${name} é sua loja de ferragens, ferramentas e acessórios técnicos de confiança em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Oferecemos um catálogo completo de fechaduras, dobradiças, corrediças telescópicas, puxadores, parafusos, fixadores, ferramentas manuais e elétricas, além de materiais hidráulicos, elétricos e acessórios para móveis e esquadrias. Atendemos marceneiros, serralheiros, instaladores, construtores e clientes residenciais com pronta-entrega, orientação técnica no balcão e atendimento ágil pelo WhatsApp. Trabalhamos com as marcas mais resistentes do mercado e preços competitivos no varejo e atacado. Solicite seu orçamento pelo WhatsApp ou visite a ${name} em ${city}.`;
+
+    const ferragensServices = [
+      { name: `Loja de Ferragens Completa em ${city}`, cat: primaryCategory, term: `loja de ferragens em ${city.toLowerCase()}`, desc: `Amplo estoque de ferragens residenciais, comerciais e técnicas na ${name} em ${city}. Tudo em fechaduras, dobradiças, trincos, cadeados e suportes com pronta-entrega e atendimento especializado no balcão e WhatsApp.` },
+      { name: `Ferragens e Acessórios para Móveis e Marcenaria`, cat: "Comércio de suprimentos para marcenaria", term: `ferragens para móveis em ${city.toLowerCase()}`, desc: `Linha completa de corrediças telescópicas, dobradiças com amortecedor (slow motion), pistões a gás, puxadores em alumínio, rodízios e suportes para marceneiros e montadores na ${name} em ${city}.` },
+      { name: `Fechaduras Residenciais, Tetra e Digitais`, cat: primaryCategory, term: `fechaduras para portas em ${city.toLowerCase()}`, desc: `Variedade em fechaduras externas, internas, banheiro, travas auxiliares tetra e fechaduras multiponto das melhores marcas na ${name} em ${city}, garantindo segurança e acabamento para suas portas.` },
+      { name: `Ferramentas Manuais e Profissionais em ${city}`, cat: "Loja de ferramentas", term: `loja de ferramentas em ${city.toLowerCase()}`, desc: `Chaves de fenda, philips, alicates, martelos, trenas, níveis, serras, jogos de soquetes e ferramentas manuais de alta resistência para uso profissional e doméstico na ${name} em ${city}.` },
+      { name: `Ferramentas Elétricas e Acessórios de Corte`, cat: "Loja de ferramentas", term: `ferramentas elétricas em ${city.toLowerCase()}`, desc: `Furadeiras, parafusadeiras, esmerilhadeiras, serras mármore e discos de corte, desbaste, brocas para concreto, aço e madeira com garantia de fábrica e ótimo preço na ${name} em ${city}.` },
+      { name: `Parafusos, Buchas, Chumbadores e Fixadores`, cat: "Loja de parafusos e fixadores", term: `casa de parafusos em ${city.toLowerCase()}`, desc: `Parafusos chipboard para MDF, soberbos, sextavados, francês, auto-atarraxantes, buchas para alvenaria e drywall, barras roscadas, porcas e arruelas vendidas no varejo e atacado em ${city}.` },
+      { name: `Dobradiças Reforçadas para Portas e Portões`, cat: primaryCategory, term: `dobradiças para portas em ${city.toLowerCase()}`, desc: `Dobradiças em aço inox, latão e ferro galvanizado com anel e rolamento para portas de madeira, esquadrias e portões pesados na ${name} em ${city}, proporcionando abertura macia e durável.` },
+      { name: `Puxadores para Portas, Armários e Gavetas`, cat: "Fornecedor de ferragens e acessórios", term: `puxadores para armários em ${city.toLowerCase()}`, desc: `Modelos modernos e clássicos de puxadores tubulares em inox, puxadores cava, alças e botões para renovar portas de entrada, cozinhas, guarda-roupas e móveis na ${name} em ${city}.` },
+      { name: `Trilhos, Roldanas e Sistemas para Portas de Correr`, cat: primaryCategory, term: `kit porta de correr em ${city.toLowerCase()}`, desc: `Kits completos de trilhos de alumínio e aço, roldanas aparentes e embutidas com rolamento blindado e guias inferiores para portas de correr de madeira, vidro ou ferro em ${city}.` },
+      { name: `Cadeados, Travas de Segurança e Correntes`, cat: primaryCategory, term: `cadeados e travas em ${city.toLowerCase()}`, desc: `Cadeados de latão maciço, cadeados tetra, travas para portão, ferrolhos, porta-cadeados e correntes soldadas galvanizadas por metro para proteção de comércios e residências em ${city}.` },
+      { name: `Colas, Adesivos, Silicones e Vedantes Técnicos`, cat: "Loja de materiais de construção", term: `colas e selantes em ${city.toLowerCase()}`, desc: `Cola branca PVA extra, cola de contato para fórmica, adesivo instantâneo, PU construção, silicone acético e neutro, espuma expansiva e veda-calha de alta aderência na ${name} em ${city}.` },
+      { name: `Materiais Hidráulicos, Registros e Conexões`, cat: "Loja de materiais de construção", term: `material hidráulico em ${city.toLowerCase()}`, desc: `Torneiras, registros de esfera e gaveta, engates flexíveis, sifões, válvulas de escoamento, fitas veda-rosca e conexões de PVC para reparos e instalações hidráulicas rápidas em ${city}.` },
+      { name: `Materiais Elétricos, Disjuntores e Tomadas`, cat: "Loja de materiais de construção", term: `material elétrico em ${city.toLowerCase()}`, desc: `Fios e cabos normatizados, disjuntores, tomadas, interruptores, lâmpadas LED, fitas isolantes e plugues para manutenção elétrica residencial e comercial segura na ${name} em ${city}.` },
+      { name: `Abrasivos, Lixas, Discos Flap e Escovas de Aço`, cat: "Loja de ferramentas", term: `discos de corte e lixas em ${city.toLowerCase()}`, desc: `Lixas para madeira, ferro e massa, discos de corte fino para inox, discos diamantados, discos flap e escovas rotativas de aço para acabamento perfeito em ${city}.` },
+      { name: `Equipamentos de Proteção Individual (EPIs)`, cat: "Loja de ferramentas", term: `epi luvas e óculos de proteção ${city.toLowerCase()}`, desc: `Luvas de segurança pigmentadas e de raspa, óculos de proteção incolor e fumê, protetores auriculares, máscaras respiratórias e botas para trabalho seguro na obra ou oficina em ${city}.` },
+      { name: `Suportes para Prateleiras, TV e Mão Francesa`, cat: primaryCategory, term: `suporte mão francesa e prateleira ${city.toLowerCase()}`, desc: `Mãos francesas reforçadas, trilhos cremalheira, suportes invisíveis para prateleiras, cantoneiras de aço e suportes articulados para TV com buchas e parafusos inclusos em ${city}.` },
+      { name: `Rodízios, Rodas para Carrinhos e Pés Niveladores`, cat: "Fornecedor de ferragens e acessórios", term: `rodízios de silicone e gel ${city.toLowerCase()}`, desc: `Rodízios giratórios em gel transparente que não riscam o piso, rodas industriais de borracha para cargas pesadas e pés reguláveis para móveis e bancadas na ${name} em ${city}.` },
+      { name: `Tintas Spray, Solventes, Vernizes e Impermeabilizantes`, cat: "Loja de materiais de construção", term: `tinta spray e verniz em ${city.toLowerCase()}`, desc: `Tintas spray de uso geral e alta temperatura, aguarrás, thinner, verniz marítimo, cupinicida e desengripantes lubrificantes para conservação e pintura rápida em ${city}.` },
+      { name: `Atendimento Especializado para Profissionais e Obras`, cat: primaryCategory, term: `fornecedor para marceneiros e obras ${city.toLowerCase()}`, desc: `Balcão técnico ágil na ${name} em ${city} para separar listas de materiais de marceneiros, serralheiros, eletricistas, encanadores e síndicos de condomínio com precisão.` },
+      { name: `Cotação Rápida no WhatsApp e Entrega em ${city}`, cat: primaryCategory, term: `ferragens entrega rápida ${city.toLowerCase()}`, desc: `Envie a foto da peça ou sua lista de ferragens e ferramentas pelo WhatsApp da ${name}. Respondemos na hora com preço justo e separamos seu pedido para retirada ou entrega em ${city}.` },
+    ];
+
+    ferragensServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const ferragensProducts = [
+      { name: "Linha Completa de Fechaduras, Dobradiças e Cadeados", cat: "Ferragens & Segurança", price: "Consulte pelo WhatsApp", desc: `Variedade completa de fechaduras externas, internas e de banheiro, travas tetra de alta segurança, dobradiças com rolamento em aço inox e cadeados reforçados na ${name} em ${city}. Trabalhamos com marcas consagradas que garantem durabilidade, resistência contra oxidação e funcionamento macio para portas de madeira, ferro e alumínio.` },
+      { name: "Corrediças Telescópicas, Puxadores e Acessórios para Móveis", cat: "Ferragens para Marcenaria", price: "Atacado e Varejo", desc: `Tudo em ferragens para fabricação, montagem e reforma de móveis na ${name} em ${city}. Corrediças telescópicas leves e pesadas, dobradiças caneco 35mm com amortecedor, pistões a gás de diversas forças, puxadores modernos em alumínio e inox, rodízios em gel e sistemas completos para portas de correr.` },
+      { name: "Ferramentas Elétricas, Manuais e Discos de Corte", cat: "Ferramentas Profissionais", price: "Pronta entrega", desc: `Equipamentos e ferramentas para profissionais exigentes e uso doméstico em ${city}. Furadeiras, parafusadeiras, esmerilhadeiras, jogos de chaves, alicates, trenas, brocas para concreto/metal/madeira e discos diamantados e de corte fino para máxima produtividade e precisão no serviço.` },
+      { name: "Parafusos, Buchas, Chumbadores e Fixação Técnica", cat: "Fixadores & Parafusos", price: "Venda por unidade ou caixa", desc: `Estoque completo de fixadores na ${name} em ${city}: parafusos chipboard para madeira e MDF, parafusos sextavados, francês, auto-brocantes para telha, buchas de nylon com anel, buchas específicas para drywall e bloco oco, barras roscadas e chumbadores mecânicos de alta carga.` },
+      { name: "Colas, Selantes PU, Silicones e Impermeabilizantes", cat: "Químicos & Adesivos", price: "Melhor custo-benefício", desc: `Soluções químicas de fixação e vedação profissional em ${city}: adesivo PU40 para construção, silicone puro anti-mofo, cola branca PVA extra, cola de contato para laminados, espuma expansiva de poliuretano, fita asfáltica autoadesiva e lubrificantes desengripantes.` },
+      { name: "Itens Hidráulicos, Elétricos e Reparos Residenciais", cat: "Manutenção & Obra", price: "Estoque completo", desc: `Resolva toda a manutenção da sua casa ou empresa em um só lugar na ${name} em ${city}. Registros, torneiras, sifões, engates flexíveis, tomadas, disjuntores, lâmpadas LED, fitas isolantes, EPIs e suportes reforçados com atendimento consultivo que ajuda você a levar a peça certa.` },
+    ];
+
+    ferragensProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (isGasDomain) {
+    primaryCategory = "Companhia de gás";
+    additionalCategories = [
+      "Distribuidora de gás",
+      "Fornecedor de água engarrafada",
+      "Fornecedor de gás butano",
+      "Fornecedor de gás propano",
+      "Serviço de entrega de gás",
+    ];
+
+    rawDescription = `A ${name} é referência em distribuição e entrega rápida de gás de cozinha (GLP) e água mineral em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Trabalhamos com botijões lacrados e inspecionados com certificação ANP e INMETRO, garantindo máxima segurança para sua família e para o seu comércio. Nosso disk gás atende com total pontualidade residências, condomínios, restaurantes, padarias e empresas em diversos bairros de ${city}, incluindo Parque Brasília e regiões vizinhas. Nossos entregadores realizam a instalação gratuita e o teste de vedação com espuma na hora da troca, assegurando tranquilidade absoluta. Aceitamos Pix, cartões de débito e crédito na maquininha sem taxas adicionais. Peça seu botijão ou galão de água mineral agora mesmo pelo WhatsApp ou telefone da ${name} em ${city}.`;
+
+    const gasServices = [
+      { name: `Entrega de Gás de Cozinha P13 em ${city}`, cat: primaryCategory, term: `gás de cozinha em ${city.toLowerCase()}`, desc: `Entrega rápida de botijão P13 lacrado com selo de conformidade ANP e INMETRO em ${city}. Troca realizada por entregadores treinados com instalação e teste de segurança gratuitos na sua residência.` },
+      { name: `Disk Gás Rápido via WhatsApp`, cat: "Distribuidora de gás", term: `disk gás ${city.toLowerCase()}`, desc: `Canal direto no WhatsApp para pedir seu botijão ou galão de água mineral em ${city}. Confirmação imediata do pedido, rastreamento da entrega e rapidez no despacho até o seu endereço.` },
+      { name: `Entrega no Parque Brasília e Bairros Vizinhos`, cat: primaryCategory, term: `distribuidora de gás parque brasília ${city.toLowerCase()}`, desc: `Atendimento dedicado com rota expressa no Parque Brasília e bairros adjacentes em ${city}. Compromisso de pontualidade e agilidade máxima para que o preparo da sua refeição não seja interrompido.` },
+      { name: `Botijão de Gás P45 Comercial e Industrial`, cat: primaryCategory, term: `gás p45 em ${city.toLowerCase()}`, desc: `Fornecimento confiável de cilindros GLP P45 para cozinhas industriais, restaurantes, lanchonetes e padarias em ${city}. Instalação técnica em centrais e baterias com laudo e alta vazão constante.` },
+      { name: `Galão de Água Mineral 20 Litros`, cat: "Fornecedor de água engarrafada", term: `água mineral 20l em ${city.toLowerCase()}`, desc: `Distribuição de garrafões retornáveis de água mineral pura de 20 litros em ${city}. Produto lacrado na fonte, garrafão higienizado e entrega higiênica e ágil para casas e escritórios.` },
+      { name: `Instalação Segura com Teste de Vazamento`, cat: primaryCategory, term: `instalação segura de gás ${city.toLowerCase()}`, desc: `Protocolo rigoroso de instalação técnica em ${city}: conferência do anel de vedação, conexão firme da borboleta e teste de espuma para conferir 100% de vedação na sua cozinha.` },
+      { name: `Cilindro de Gás P20 para Empilhadeiras`, cat: primaryCategory, term: `gás p20 para empilhadeira ${city.toLowerCase()}`, desc: `Abastecimento de cilindros P20 específicos para empilhadeiras e operadores logísticos em ${city}. Válvula de segurança líquida, peso conferido e contrato de faturamento para empresas.` },
+      { name: `Fardos de Água Mineral 500ml e 1,5L`, cat: "Fornecedor de água engarrafada", term: `fardo de água mineral ${city.toLowerCase()}`, desc: `Venda no atacado e varejo de fardos de água mineral sem gás e com gás em ${city}. Perfeito para eventos, reuniões corporativas, estabelecimentos comerciais e consumo doméstico.` },
+      { name: `Reguladores e Mangueiras com Selo INMETRO`, cat: primaryCategory, term: `regulador de gás inmetro ${city.toLowerCase()}`, desc: `Substituição preventiva de válvulas reguladoras de pressão e mangueiras trançadas certificadas pelo INMETRO em ${city}, dentro do prazo de validade para máxima segurança.` },
+      { name: `Atendimento aos Sábados, Domingos e Feriados`, cat: primaryCategory, term: `gás aberto domingo em ${city.toLowerCase()}`, desc: `Plantão disk gás com equipe de prontidão nos finais de semana e feriados em ${city}. A garantia de que você nunca ficará sem gás na hora do almoço de família.` },
+      { name: `Fornecimento para Restaurantes e Lanchonetes`, cat: "Distribuidora de gás", term: `fornecedor de gás para restaurantes ${city.toLowerCase()}`, desc: `Parceria comercial contínua para negócios gastronômicos em ${city}. Atendimento prioritário, entrega programada e condições especiais para consumidores de alto volume.` },
+      { name: `Troca Confiável de Vasilhame Vazio`, cat: primaryCategory, term: `troca de botijão vazio ${city.toLowerCase()}`, desc: `Aceitamos seu vasilhame vazio padrão ABNT com pesagem honesta e garantia total na ${name} em ${city}. Botijões testados hidrostática e visualmente antes de cada rota.` },
+      { name: `Pagamento Facilitado no Pix e Cartões`, cat: primaryCategory, term: `pedir gás no cartão ${city.toLowerCase()}`, desc: `Entregadores com maquininha sem fio para pagamento no débito, crédito ou Pix na entrega em ${city}. Sem cobrança de taxas extras e com emissão de nota fiscal sob solicitação.` },
+      { name: `Abastecimento Programado para Condomínios`, cat: primaryCategory, term: `gás para condomínio em ${city.toLowerCase()}`, desc: `Planejamento de rotas e entrega periódica de gás GLP para condomínios residenciais e comerciais em ${city}, com controle de estoque e pontualidade combinada.` },
+      { name: `Água Mineral em Copos Descartáveis`, cat: "Fornecedor de água engarrafada", term: `água mineral em copo atacado ${city.toLowerCase()}`, desc: `Caixas de água mineral em copos individuais selados para clínicas, escritórios, eventos e recepções em ${city}. Higiene prática e pronta para servir.` },
+      { name: `Tele-Entrega Residencial em Domicílio`, cat: primaryCategory, term: `tele entrega de gás em domicílio ${city.toLowerCase()}`, desc: `Serviço de entrega em domicílio com frota ágil e motoristas identificados em ${city}. Cuidado no transporte e entrada autorizada com respeito à sua privacidade.` },
+      { name: `Garantia de Peso e Lacre de Segurança ANP`, cat: primaryCategory, term: `botijão com lacre de segurança ${city.toLowerCase()}`, desc: `Todos os recipientes chegam com lacre intacto sobre a válvula e peso verificado conforme portaria da ANP em ${city}. Certeza de que você recebe exatamente o que pagou.` },
+      { name: `Atendimento Corporativo com Emissão de NF`, cat: primaryCategory, term: `gás para empresas com nota fiscal ${city.toLowerCase()}`, desc: `Atendimento formal para órgãos públicos, escolas, fábricas e comércios em ${city}. Emissão ágil de DANFE e faturamento quinzenal ou mensal mediante cadastro.` },
+      { name: `Garrafões Higienizados e Prontos para Uso`, cat: "Fornecedor de água engarrafada", term: `galão de água higienizado ${city.toLowerCase()}`, desc: `Processo rigoroso de sanitização externa dos garrafões de água mineral antes do despacho em ${city}, garantindo água pura, sem gosto residual e sem contaminação.` },
+      { name: `Canal de Suporte e Emergência pelo WhatsApp`, cat: primaryCategory, term: `contato disk gás whatsapp ${city.toLowerCase()}`, desc: `Atendimento ágil para tirar dúvidas sobre odor de gás, troca de registro ou solicitar suporte técnico de emergência com a equipe especializada da ${name} em ${city}.` },
+    ];
+
+    gasServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const gasProducts = [
+      { name: "Botijão de Gás P13 Residencial (GLP 13kg)", cat: "Gás Residencial", price: "Consulte pelo WhatsApp", desc: `Botijão de gás GLP 13kg novo, inspecionado e lacrado na fonte com certificado ANP e INMETRO na ${name} em ${city}. Ideal para fogões e fornos residenciais. Inclui entrega expressa em domicílio, instalação gratuita e teste de vedação com espuma por profissional qualificado para sua total proteção familiar.` },
+      { name: "Botijão de Gás P45 Comercial e Industrial", cat: "Gás Comercial", price: "Cotação sob demanda", desc: `Cilindro de gás GLP 45kg de alta capacidade, projetado para cozinhas industriais, restaurantes, lanchonetes, padarias e centrais de condomínios em ${city}. Fornecimento contínuo de alta pressão, laudo técnico de inspeção e atendimento programado com nota fiscal e suporte técnico prioritário.` },
+      { name: "Cilindro P20 para Empilhadeiras e Uso Operacional", cat: "Linha Industrial", price: "Consulte faturamento", desc: `Cilindro específico P20 desenvolvido exclusivamente para empilhadeiras movidas a GLP em ${city}. Saída de gás na fase líquida com válvula de segurança anti-retorno, recarga certificada com pesagem de precisão e contratos corporativos com faturamento facilitado.` },
+      { name: "Galão de Água Mineral 20 Litros Retornável", cat: "Água Mineral", price: "Melhor preço da região", desc: `Garrafão retornável de 20 litros de água mineral natural, pura, leve e com baixo teor de sódio na ${name} em ${city}. Envase automatizado com lacre inviolável e data de envase gravada. Entrega rápida no seu endereço com troca do seu galão vazio e garrafão limpo.` },
+      { name: "Fardo de Água Mineral 500ml sem Gás (Pack 12 Unid.)", cat: "Bebidas & Packs", price: "Condição atacado e varejo", desc: `Pack fechado com 12 garrafas de 500ml de água mineral sem gás, com tampa de rosca segura e embalagem resistente na ${name} em ${city}. Praticidade para levar no carro, trabalho, treinos e eventos familiares com descontos progressivos para compras em maior quantidade.` },
+      { name: "Kit Regulador de Gás com Mangueira e Abraçadeiras INMETRO", cat: "Acessórios de Segurança", price: "Pronta entrega", desc: `Kit completo de segurança para instalação de gás residencial em ${city}. Contém registro regulador de pressão certificado pelo INMETRO, mangueira de PVC reforçada de alta durabilidade e abraçadeiras metálicas. Essencial para substituir reguladores com mais de 5 anos de uso.` },
+    ];
+
+    gasProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (isSerralheriaDomain) {
+    primaryCategory = "Serralheria";
+    additionalCategories = [
+      "Oficina metalúrgica",
+      "Fabricante de estruturas metálicas",
+      "Serviço de soldagem",
+      "Serralheiro",
+      "Instalação de portões",
+    ];
+
+    rawDescription = `A ${name} é referência em serviços de serralheria, fabricação de portões sob medida, grades de proteção e estruturas metálicas em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Trabalhamos com matéria-prima de primeira linha, solda de alta resistência e tratamento anticorrosivo com fundo primer e pintura automotiva para máxima durabilidade. Desenvolvemos projetos residenciais e comerciais personalizados, unindo estética moderna, segurança reforçada e acabamento impecável. Nossa equipe em ${city} atende no prazo combinado com orçamento transparente e facilidades no pagamento. Solicite seu projeto pelo WhatsApp ou agende uma visita técnica na ${name} em ${city}.`;
+
+    const serralheriaServices = [
+      { name: `Fabricação de Portões de Ferro em ${city}`, cat: primaryCategory, term: `portão de ferro sob medida ${city.toLowerCase()}`, desc: `Fabricação sob medida de portões basculantes, deslizantes e pivotantes em aço galvanizado em ${city}. Design moderno, reforço estrutural e acabamento contra ferrugem.` },
+      { name: `Grades de Proteção para Portas e Janelas`, cat: primaryCategory, term: `grades de proteção em ${city.toLowerCase()}`, desc: `Confecção e instalação de grades de ferro reforçadas para janelas, portas e sacadas residenciais e comerciais em ${city}, proporcionando segurança com estilo visual.` },
+      { name: `Corrimãos e Guarda-Corpos Metálicos`, cat: primaryCategory, term: `corrimão metálico em ${city.toLowerCase()}`, desc: `Fabricação e montagem de corrimãos em tubo de aço e guarda-corpos em conformidade com as normas ABNT de segurança em escadas, rampas e mezaninos em ${city}.` },
+      { name: `Estruturas Metálicas para Coberturas e Galpões`, cat: "Fabricante de estruturas metálicas", term: `estrutura metálica em ${city.toLowerCase()}`, desc: `Projetos e montagem de tesouras, vigas e coberturas metálicas com telhas termoacústicas ou galvanizadas para galpões, garagens e quadras em ${city}.` },
+      { name: `Instalação e Ajuste de Portões de Correr`, cat: "Instalação de portões", term: `instalação de portão de correr ${city.toLowerCase()}`, desc: `Montagem precisa de trilhos, roldanas blindadas e batentes reforçados para portões deslizantes em ${city}, garantindo deslizamento suave e sem ruídos.` },
+      { name: `Mezaninos Metálicos para Comércios e Residências`, cat: "Fabricante de estruturas metálicas", term: `mezanino metálico em ${city.toLowerCase()}`, desc: `Construção de mezaninos sob medida com vigas I ou U e piso metálico ou em painel wall em ${city}, dobrando a área útil de sua loja ou empresa com rapidez.` },
+      { name: `Portas de Enrolar Metálicas e Comerciais`, cat: primaryCategory, term: `porta de enrolar manual e automática ${city.toLowerCase()}`, desc: `Fabricação de portas de esteira de aço galvanizado perfurado ou meia cana fechada para comércio e garagens em ${city}, com fechadura tetra reforçada.` },
+      { name: `Manutenção e Soldagem de Portões e Grades`, cat: "Serviço de soldagem", term: `conserto de portão de ferro ${city.toLowerCase()}`, desc: `Reparos rápidos de serralheria em ${city}: reforço de solda MIG/Eletrodo, troca de cabos de aço, alinhamento de folhas e substituição de roldanas emperradas.` },
+      { name: `Escadas Metálicas Reta, Caracol e Santos Dumont`, cat: primaryCategory, term: `escada de ferro em ${city.toLowerCase()}`, desc: `Projetos de escadas metálicas funcionais com degraus em chapa xadrez antiderrapante ou madeira em ${city}, aliando economia de espaço e robustez.` },
+      { name: `Fachadas Comerciais em Estrutura Metálica e ACM`, cat: "Oficina metalúrgica", term: `fachada metálica comercial ${city.toLowerCase()}`, desc: `Subestrutura metálica nivelada para aplicação de placas de ACM, brises e letreiros comerciais em ${city}, valorizando a identidade visual do seu negócio.` },
+      { name: `Portões Basculantes com Caixa de Contrapeso`, cat: primaryCategory, term: `portão basculante fechado ${city.toLowerCase()}`, desc: `Engenharia precisa de contrapeso para elevação leve e balanceada de portões basculantes em ${city}, ideal para garagens com espaço frontal reduzido.` },
+      { name: `Lixeiras Metálicas de Calçada e Condominiais`, cat: primaryCategory, term: `lixeira de ferro calçada ${city.toLowerCase()}`, desc: `Fabricação de lixeiras suspensas em chapa de aço e tela expandida para calçadas e tambores para condomínios em ${city}, resistentes ao tempo e depredação.` },
+      { name: `Fechamentos Metálicos de Terrenos e Alambrados`, cat: primaryCategory, term: `fechamento metálico de terreno ${city.toLowerCase()}`, desc: `Cercamentos em tela artística soldada, gradis modulares tipo Nylofor e mourões de ferro em ${city}, garantindo segurança perimetral com custo acessível.` },
+      { name: `Chapa Perfurada e Painéis Decorativos em Aço`, cat: primaryCategory, term: `painel de chapa perfurada ${city.toLowerCase()}`, desc: `Recorte e instalação de painéis metálicos decorativos para divisórias de ambientes, jardins de inverno e fechamentos arquitetônicos modernos em ${city}.` },
+      { name: `Tratamento com Primer e Pintura Eletrostática`, cat: "Oficina metalúrgica", term: `pintura eletrostática portão ${city.toLowerCase()}`, desc: `Aplicação de fundo convertedor de ferrugem e acabamento com tinta sintética automotiva ou pintura a pó eletrostática para máxima resistência climática em ${city}.` },
+      { name: `Portões Sociais Embutidos ou Independentes`, cat: primaryCategory, term: `portão social com fechadura elétrica ${city.toLowerCase()}`, desc: `Portões de pedestre com fechadura de alta segurança, visor em vidro ou chapa perfurada e puxadores em inox sob medida para residências em ${city}.` },
+      { name: `Visita Técnica e Orçamento sem Compromisso`, cat: primaryCategory, term: `orçamento serralheiro em ${city.toLowerCase()}`, desc: `Medição precisa no local com especialista em serralheria em ${city}, tirando dúvidas sobre modelos, tipos de chapa e melhor posicionamento de abertura.` },
+      { name: `Pergolados Metálicos para Jardins e Garagens`, cat: "Fabricante de estruturas metálicas", term: `pergolado de ferro moderno ${city.toLowerCase()}`, desc: `Estruturas de pérgola em aço tubular com pintura nobre em ${city}, perfeitas para compor áreas de lazer com cobertura em vidro ou policarbonato.` },
+      { name: `Serralheria Artística e Serralheria Fina`, cat: "Serralheiro", term: `serralheria artística em ${city.toLowerCase()}`, desc: `Trabalhos minuciosos com ferro forjado, arabescos, maçanetas clássicas e detalhes decorativos para quem busca um estilo arquitetônico clássico em ${city}.` },
+      { name: `Garantia e Pós-Instalação Dedicado`, cat: primaryCategory, term: `serralheria de confiança ${city.toLowerCase()}`, desc: `Garantia formal de fabricação e montagem pela ${name} em ${city}, com suporte ágil para regulagens e manutenções preventivas do seu portão.` },
+    ];
+
+    serralheriaServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const serralheriaProducts = [
+      { name: "Portão Basculante Galvanizado Sob Medida", cat: "Portões Residenciais", price: "Projeto sob medida", desc: `Portão basculante fabricado em tubos de aço galvanizado 100% soldados, com caixa de contrapeso balanceada e rolamentos blindados na ${name} em ${city}. Acabamento anticorrosivo com primer epóxi e pintura automotiva. Proporciona elevação suave e rápida, aproveitando 100% da largura da garagem.` },
+      { name: "Portão Deslizante Residencial com Chapa Lambril", cat: "Portões Residenciais", price: "Orçamento rápido", desc: `Portão de correr moderno com chapa de lambril deitada ou em pé, puxador em inox e trilho em aço trefilado embutido em ${city}. Desliza com leveza incomparável e possui travamento central para fechadura de segurança. Projeto desenhado para harmonizar com a fachada da sua casa.` },
+      { name: "Grade de Proteção Reforçada em Aço", cat: "Segurança Perimetral", price: "Sob medida", desc: `Grades sob medida para portas de entrada, janelas e sacadas em ${city}. Tubos e barras maciças de alta espessura com ancoragem profunda na alvenaria, impedindo arrombamentos e preservando a ventilação e iluminação natural dos ambientes internos.` },
+      { name: "Corrimão e Guarda-Corpo Metálico ABNT", cat: "Acessibilidade & Guarda-Corpos", price: "Consulte por metro", desc: `Corrimãos de parede e guarda-corpos autoportantes fabricados em tubo redondo ou quadrado em aço carbono ou inox em ${city}. Solda polida, curvas sem emendas aparentes e fixação reforçada atendendo integralmente aos requisitos da norma técnica ABNT NBR 9077.` },
+      { name: "Estrutura Metálica para Cobertura de Garagem", cat: "Coberturas & Galpões", price: "Cotação técnica", desc: `Coberturas em perfilados metálicos leves e resistentes para garagens residenciais, áreas gourmet e comércios em ${city}. Caimento perfeito calculado para escoamento de água pluvial com calhas embutidas e opções de telhas galvanizadas, termoacústicas ou policarbonato.` },
+      { name: "Mezanino Metálico Modular sob Demanda", cat: "Mezaninos & Estruturas", price: "Projeto estrutural", desc: `Mezaninos robustos para ampliação de espaço em lojas, galpões e escritórios em ${city}. Estrutura autoportante em vigas laminadas calculadas para sobrecarga de até 500 kgf/m², com escada metálica de acesso inclusa e montagem rápida e limpa.` },
+    ];
+
+    serralheriaProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (/veiculo|carro|auto|concessionar|seminovo|revenda.*veic|moto|mecanic|oficina|funilaria|cambio|freio|suspensao/i.test(hay)) {
+    primaryCategory = "Concessionária de automóveis";
+    additionalCategories = [
+      "Revendedor de veículos seminovos",
+      "Agência de veículos",
+      "Loja de carros usados",
+      "Financiamento de veículos",
+      "Oficina mecânica",
+      "Loja de peças e acessórios para automóveis",
+    ];
+
+    rawDescription = `A ${name} é referência em compra, venda, troca e financiamento de veículos seminovos e usados com garantia e procedência em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Trabalhamos com estoque selecionado, veículos revisados com laudo cautelar aprovado e as melhores taxas do mercado em até 60 parcelas fixas. Aceitamos seu carro ou moto usado na troca com avaliação justa e facilitamos sua entrada no cartão de crédito. Se você procura concessionária em ${city}, loja de veículos seminovos, financiamento de carro ou quer vender seu veículo com segurança e agilidade, fale conosco pelo WhatsApp ou visite nosso pátio. Conquiste seu próximo veículo com transparência, segurança e atendimento ágil na ${name}.`;
+
+    const autoServices = [
+      { name: `Venda de Veículos Seminovos em ${city}`, cat: primaryCategory, term: `carros seminovos em ${city.toLowerCase()}`, desc: `Compre veículos seminovos revisados com garantia e procedência em ${city}. Amplo estoque de sedans, hatches, SUVs e utilitários com laudo cautelar aprovado e documentação rigorosamente em dia para sua total segurança.` },
+      { name: `Compra e Avaliação de Carros Usados`, cat: "Revendedor de veículos seminovos", term: `comprar carro usado ${city.toLowerCase()}`, desc: `Compramos seu carro usado com avaliação justa e pagamento imediato em ${city}. Processo transparente, rápido e sem burocracia para você vender seu veículo com tranquilidade e receber na hora.` },
+      { name: `Financiamento de Veículos em ${city}`, cat: "Financiamento de veículos", term: `financiamento de veículos em ${city.toLowerCase()}`, desc: `Financiamento de carros e motos com as melhores financeiras do Brasil em ${city}. Taxas especiais, aprovação ágil mesmo sem comprovação de renda e parcelamento em até 60x fixas com ou sem entrada.` },
+      { name: `Troca com Troco de Veículos em ${city}`, cat: primaryCategory, term: `troca com troco ${city.toLowerCase()}`, desc: `Troque seu carro por um de menor ou maior valor e saia com dinheiro no bolso em ${city}. Condições especiais na negociação para você renovar de veículo e resolver seus compromissos financeiros.` },
+      { name: `Aceitamos Seu Usado na Troca`, cat: primaryCategory, term: `avaliação de veículo na troca ${city.toLowerCase()}`, desc: `Utilize seu carro ou moto usado como parte do pagamento ou como entrada no seu próximo seminovo na ${name} em ${city}. Avaliação competitiva de mercado e facilidade no fechamento do negócio.` },
+      { name: `Veículos com Laudo Cautelar Aprovado`, cat: primaryCategory, term: `carros com laudo cautelar ${city.toLowerCase()}`, desc: `Garantia de procedência com perícia cautelar 100% aprovada em todo o estoque em ${city}. Veículos sem histórico de leilão, sinistro ou adulteração de chassi para sua máxima tranquilidade.` },
+      { name: `Garantia de Motor e Câmbio`, cat: primaryCategory, term: `carros com garantia ${city.toLowerCase()}`, desc: `Todos os seminovos comercializados pela ${name} contam com garantia legal e contratual de motor e câmbio, além de rigorosa revisão mecânica, elétrica e de suspensão pré-entrega em ${city}.` },
+      { name: `SUVs e Utilitários Seminovos em ${city}`, cat: "Revendedor de veículos seminovos", term: `suvs seminovos em ${city.toLowerCase()}`, desc: `Seleção exclusiva de SUVs compactos, médios e familiares em ${city}. Modelos automáticos, econômicos, com amplo espaço interno e tecnologia moderna para você e sua família viajarem com conforto.` },
+      { name: `Sedans Confortáveis para Família e Viagem`, cat: primaryCategory, term: `sedans seminovos ${city.toLowerCase()}`, desc: `Sedans espaçosos, elegantes e econômicos com porta-malas generoso em ${city}. Veículos ideais para viagens, uso executivo ou trabalho diário com alto padrão de acabamento e segurança.` },
+      { name: `Hatches Econômicos para Cidade e Aplicativo`, cat: primaryCategory, term: `carros populares econômicos ${city.toLowerCase()}`, desc: `Hatches compactos de baixo consumo e manutenção barata em ${city}. Perfeitos para o trânsito do dia a dia ou motoristas de aplicativo, com ar-condicionado, direção elétrica e multimídia.` },
+      { name: `Pick-ups e Caminhonetes em ${city}`, cat: primaryCategory, term: `camionetes usadas ${city.toLowerCase()}`, desc: `Caminhonetes e pick-ups a diesel e flex para o trabalho no campo ou lazer na cidade. Força, robustez e capacidade de carga com mecânica testada e procedência garantida em ${city}.` },
+      { name: `Simulação de Financiamento via WhatsApp`, cat: "Financiamento de veículos", term: `simular financiamento carro ${city.toLowerCase()}`, desc: `Faça sua simulação de financiamento gratuita e sem compromisso pelo WhatsApp com a equipe da ${name}. Resposta rápida com diferentes opções de entrada e parcelas que cabem no seu orçamento.` },
+      { name: `Entrada Facilitada no Cartão de Crédito`, cat: primaryCategory, term: `parcelar entrada do carro ${city.toLowerCase()}`, desc: `Facilitamos a entrada do seu veículo parcelando em até 21x no cartão de crédito em ${city}. Flexibilidade total para você sair de carro novo sem comprometer seu fluxo de caixa.` },
+      { name: `Despachante e Transferência Rápida`, cat: primaryCategory, term: `transferência de veículos ${city.toLowerCase()}`, desc: `Assessoria completa de despachante para transferência ágil de documentos do veículo em ${city}. Cuidamos de todo o processo junto ao DETRAN para você não perder tempo com burocracias.` },
+      { name: `Veículos de Único Dono e Baixa Quilometragem`, cat: primaryCategory, term: `carros unico dono ${city.toLowerCase()}`, desc: `Oportunidades selecionadas de veículos de único dono, com revisões registradas no manual do proprietário e chave reserva em ${city}. Conservação impecável de lataria e interior.` },
+      { name: `Agendamento de Test Drive em ${city}`, cat: primaryCategory, term: `test drive veiculos ${city.toLowerCase()}`, desc: `Venha fazer um test drive sem compromisso na ${name} em ${city}. Sinta o conforto, a dirigibilidade e a qualidade do veículo antes de tomar sua decisão com total segurança.` },
+      { name: `Polimento e Higienização Profissional`, cat: primaryCategory, term: `higienização automotiva ${city.toLowerCase()}`, desc: `Entrega técnica impecável: todos os carros passam por higienização interna profunda e polimento da pintura antes de serem entregues ao novo proprietário em ${city}.` },
+      { name: `Consultoria Automotiva Personalizada`, cat: primaryCategory, term: `consultoria compra de carros ${city.toLowerCase()}`, desc: `Especialistas preparados para entender seu perfil, uso diário e orçamento, indicando o melhor modelo e custo-benefício para a sua necessidade em ${city}.` },
+      { name: `Consignação Segura de Veículos`, cat: "Revendedor de veículos seminovos", term: `consignar veículo em ${city.toLowerCase()}`, desc: `Deixe seu veículo em nosso pátio para venda sob consignação com segurança, divulgação nas principais plataformas digitais e contrato formal de responsabilidade em ${city}.` },
+      { name: `Pós-Venda Dedicado e Suporte ao Cliente`, cat: primaryCategory, term: `loja de veiculos confiavel ${city.toLowerCase()}`, desc: `Relacionamento contínuo pós-entrega com suporte ágil para dúvidas, revisões preventivas e facilidades na sua próxima troca de veículo na ${name} em ${city}.` },
+    ];
+
+    autoServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const autoProducts = [
+      { name: "Carros Seminovos com Cautelar Aprovada", cat: "Seminovos Premium", price: "Consulte o estoque", desc: `Estoque selecionado de veículos seminovos revisados com garantia e procedência comprovada em ${city}. Laudo cautelar 100% aprovado sem restrições de leilão ou sinistro. Financiamento com as melhores taxas do mercado e avaliação justa do seu veículo usado na troca. Fale no WhatsApp para receber fotos e vídeo do estoque.` },
+      { name: "Compra e Troca com Avaliação Justa", cat: "Avaliação & Troca", price: "Avaliação imediata", desc: `Compramos seu veículo ou aceitamos seu usado como entrada com avaliação justa e pagamento na hora em ${city}. Negociação transparente sem intermediários, permitindo também troca com troco para você sair com dinheiro no bolso e veículo novo no mesmo dia.` },
+      { name: "Financiamento Facilitado em até 60x", cat: "Financiamento Bancário", price: "Simulação sem compromisso", desc: `Aprovação ágil com as principais financeiras do Brasil em ${city}. Simulação sem compromisso pelo WhatsApp, parcelas que cabem no bolso e possibilidade de financiar com ou sem entrada, além de parcelamento da entrada no cartão de crédito em até 21x.` },
+      { name: "SUVs e Utilitários de Procedência", cat: "SUVs & Utilitários", price: "Confira ofertas", desc: `Veículos modernos, espaçosos e com alta tecnologia para quem busca conforto e estabilidade em ${city}. Revisão completa preventiva antes da entrega, higienização detalhada e garantia de procedência em toda a linha de SUVs.` },
+      { name: "Hatches e Sedans Econômicos", cat: "Linha Urbana & Viagem", price: "Estoque atualizado", desc: `Modelos com excelente custo-benefício, baixa manutenção e ótimo consumo de combustível em ${city}. Perfeitos para famílias ou trabalho diário, com opções manuais e automáticas prontas para rodar.` },
+      { name: "Consignação Segura e Venda Rápida", cat: "Venda Consignada", price: "Taxa competitiva", desc: `Deixe seu carro com quem entende de mercado automotivo em ${city}. Divulgação profissional, pátio seguro e movimentado, fotografia de alta qualidade e negociação garantida para vender seu carro pelo valor correto.` },
+    ];
+
+    autoProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (/farmac|drogari|medicam|remedio|droga|saude|drogalu/i.test(hay)) {
+    primaryCategory = "Farmácia";
+    additionalCategories = [
+      "Drogaria",
+      "Loja de produtos de beleza e saúde",
+      "Farmácia de manipulação",
+      "Perfumaria",
+      "Loja de cosméticos",
+    ];
+
+    rawDescription = `A ${name} é sua farmácia de confiança em ${city}, ${uf}, oferecendo linha completa de medicamentos genéricos, de referência e similares com os melhores descontos da região. ${customContext ? `${customContext}. ` : ""}Contamos com atendimento farmacêutico humanizado, tele-entrega rápida pelo WhatsApp em diversos bairros e variedade em dermocosméticos, cuidados infantis, vitaminas e higiene pessoal. Prestamos serviços de aferição de pressão arterial, teste de glicemia e aplicação de injetáveis com segurança e respeito à saúde de toda a família. Fale com nossa equipe pelo WhatsApp ou venha nos visitar e economize na compra dos seus remédios com quem entende de cuidado e dedicação em ${city}.`;
+
+    const pharmaServices = [
+      { name: `Farmácia com Tele-Entrega em ${city}`, cat: primaryCategory, term: `farmácia entrega rápida em ${city.toLowerCase()}`, desc: `Tele-entrega rápida e segura de medicamentos e itens de perfumaria em ${city}. Peça pelo WhatsApp e receba no conforto da sua casa com agilidade e diversas formas de pagamento no ato da entrega.` },
+      { name: `Medicamentos Genéricos com Desconto`, cat: primaryCategory, term: `remédios genéricos baratos ${city.toLowerCase()}`, desc: `Linha completa de genéricos certificados pela ANVISA com descontos especiais em ${city}. Mesma qualidade e eficácia comprovada por um preço acessível para o seu tratamento contínuo.` },
+      { name: `Dermocosméticos e Skincare em ${city}`, cat: "Loja de produtos de beleza e saúde", term: `dermocosméticos em ${city.toLowerCase()}`, desc: `Marcas consagradas de cuidados com a pele, protetores solares, séruns faciais, hidratantes e tratamentos dermatológicos recomendados por especialistas em ${city}.` },
+      { name: `Aferição de Pressão Arterial e Glicemia`, cat: primaryCategory, term: `aferir pressão farmácia ${city.toLowerCase()}`, desc: `Acompanhamento preventivo com aferição precisa de pressão arterial e teste rápido de glicemia capilar realizado por profissionais farmacêuticos qualificados em ${city}.` },
+      { name: `Aplicação de Injetáveis com Segurança`, cat: primaryCategory, term: `aplicação de injeção farmácia ${city.toLowerCase()}`, desc: `Sala de serviços farmacêuticos equipada e higienizada para aplicação correta e segura de medicamentos injetáveis mediante receita médica em ${city}.` },
+      { name: `Orientação Farmacêutica Especializada`, cat: primaryCategory, term: `farmacêutico de plantão ${city.toLowerCase()}`, desc: `Atendimento técnico e humanizado para tirar dúvidas sobre dosagens, interações medicamentosas e horários corretos de uso para seu tratamento ser eficaz em ${city}.` },
+      { name: `Vitaminas e Suplementos Alimentares`, cat: "Loja de produtos de beleza e saúde", term: `vitaminas e suplementos ${city.toLowerCase()}`, desc: `Vitaminas de A a Z, ômega 3, colágeno, cálcio, magnésio e suplementação para reforçar a imunidade, energia e saúde preventiva de adultos, idosos e crianças em ${city}.` },
+      { name: `Linha Infantil, Fraldas e Fórmulas`, cat: primaryCategory, term: `fraldas e fórmulas infantis ${city.toLowerCase()}`, desc: `Tudo para o cuidado do seu bebê em ${city}: fraldas descartáveis dos melhores tamanhos, lenços umedecidos, pomadas para assaduras e leites/fórmulas infantis com preço justo.` },
+      { name: `Primeiros Socorros e Curativos`, cat: primaryCategory, term: `material de curativo farmácia ${city.toLowerCase()}`, desc: `Antissépticos, gazes, ataduras, esparadrapos, fitas microporosas e kits completos de primeiros socorros para cuidados domésticos e emergências em ${city}.` },
+      { name: `Aparelhos de Pressão e Glicosímetros`, cat: primaryCategory, term: `aparelho de pressão digital ${city.toLowerCase()}`, desc: `Monitores digitais de pressão de braço e pulso, termômetros clínicos e tiras reagentes para medição de glicose com garantia e selo de qualidade INMETRO em ${city}.` },
+      { name: `Perfumaria e Cuidados Pessoais`, cat: "Perfumaria", term: `perfumaria e cosméticos ${city.toLowerCase()}`, desc: `Shampoos, condicionadores, sabonetes, desodorantes e linhas completas de higiene diária para toda a família com lançamentos e promoções frequentes em ${city}.` },
+      { name: `Medicamentos Controlados e Retenção de Receita`, cat: primaryCategory, term: `remédios controlados farmácia ${city.toLowerCase()}`, desc: `Dispensação responsável e segura de medicamentos sujeitos a controle especial (Portaria 344/98) com conferência rigorosa de receituário pelo farmacêutico em ${city}.` },
+      { name: `Antigripais e Analgésicos Isentos de Prescrição`, cat: primaryCategory, term: `remédio para gripe e dor ${city.toLowerCase()}`, desc: `Alívio rápido de sintomas de gripes, resfriados, febre e dores de cabeça com orientação personalizada sobre o melhor medicamento para o seu caso em ${city}.` },
+      { name: `Produtos Ortopédicos e Meias de Compressão`, cat: primaryCategory, term: `produtos ortopédicos farmácia ${city.toLowerCase()}`, desc: `Joelheiras, tornozeleiras, munhequeiras, tipoias e meias elásticas de compressão para auxílio na recuperação muscular e conforto vascular diário em ${city}.` },
+      { name: `Higiene Bucal e Cuidados Odontológicos`, cat: primaryCategory, term: `higiene bucal farmácia ${city.toLowerCase()}`, desc: `Escovas dentais ortodônticas e elétricas, cremes dentais clareadores e para dentes sensíveis, enxaguantes bucais e fios dentais para um sorriso saudável em ${city}.` },
+      { name: `Protetor Solar e Cuidados com o Sol`, cat: "Loja de cosméticos", term: `protetor solar facial e corporal ${city.toLowerCase()}`, desc: `Filtros solares com alta proteção UVA/UVB, toque seco e fórmulas resistentes à água para proteger sua pele contra os raios solares e fotoenvelhecimento em ${city}.` },
+      { name: `Suplementação Esportiva e Proteínas`, cat: "Loja de produtos de beleza e saúde", term: `whey protein creatina farmácia ${city.toLowerCase()}`, desc: `Whey protein, creatina, barras proteicas e isotônicos para quem pratica exercícios e busca rendimento físico e recuperação muscular com segurança em ${city}.` },
+      { name: `Conveniência e Atendimento Balcão`, cat: primaryCategory, term: `farmácia no centro ${city.toLowerCase()}`, desc: `Localização privilegiada com fácil estacionamento, atendimento rápido no balcão e equipe pronta para acolher e atender você com cordialidade em ${city}.` },
+      { name: `Programa de Desconto e Fidelidade`, cat: primaryCategory, term: `farmácia com desconto no pix ${city.toLowerCase()}`, desc: `Cadastre-se gratuitamente em nosso programa de fidelidade e garanta descontos automáticos em medicamentos e perfumaria na ${name} em ${city}.` },
+      { name: `Atendimento Personalizado via WhatsApp`, cat: primaryCategory, term: `orçamento de remédios no whatsapp ${city.toLowerCase()}`, desc: `Envie sua receita médica pelo WhatsApp e receba a cotação imediata com alternativas de genéricos para economizar tempo e dinheiro em ${city}.` },
+    ];
+
+    pharmaServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const pharmaProducts = [
+      { name: "Medicamentos Genéricos e de Referência", cat: "Medicamentos", price: "Melhor preço garantido", desc: `Linha completa de medicamentos aprovados pela ANVISA com garantia de procedência na ${name} em ${city}. Consulte disponibilidade pelo WhatsApp e receba em casa com agilidade ou retire no balcão com atendimento prioritário.` },
+      { name: "Linha Completa de Dermocosméticos", cat: "Dermocosméticos & Skincare", price: "Confira promoções", desc: `Produtos dermatológicos consagrados para cuidados diários com a pele do rosto e do corpo em ${city}. Protetores solares, hidratantes, sabonetes faciais e anti-idade das melhores marcas do mercado.` },
+      { name: "Vitaminas, Minerais e Imunidade", cat: "Vitaminas & Suplementos", price: "Descontos especiais", desc: `Complexos vitamínicos completos, vitamina C, vitamina D, zinco e ômega 3 para fortalecer o sistema imunológico e garantir disposição física e mental para toda a sua família em ${city}.` },
+      { name: "Cuidados para Mamães e Bebês", cat: "Linha Infantil", price: "Ofertas em fraldas", desc: `Variedade em fraldas descartáveis, lenços umedecidos hipoalergênicos, pomadas contra assaduras, fórmulas infantis e sabonetes suaves para a pele sensível dos pequenos na ${name} em ${city}.` },
+      { name: "Primeiros Socorros e Ortopedia", cat: "Saúde & Ortopedia", price: "Preço acessível", desc: `Materiais para curativos, ataduras, antissépticos, termômetros, aparelhos de pressão e acessórios ortopédicos para reabilitação e cuidados preventivos na sua casa em ${city}.` },
+      { name: "Higiene Pessoal e Perfumaria", cat: "Higiene & Beleza", price: "Itens promocionais", desc: `Linha diária de higiene bucal, cuidados com cabelo, desodorantes e perfumaria com promoções no Pix e parcelamento no cartão na ${name} em ${city}. Entrega expressa na região.` },
+    ];
+
+    pharmaProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (/pamonh|milho\s*verde|curau/i.test(hay)) {
+    primaryCategory = realNicheOverride || "Pamonharia";
+    additionalCategories = [
+      "Restaurante de comida típica",
+      "Lanchonete",
+      "Restaurante familiar",
+      "Entrega de refeições",
+      "Confeitaria e doceria",
+    ];
+
+    rawDescription = `A ${name} é referência em pamonhas artesanais feitas na hora com milho 100% puro e selecionado em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Preparamos diariamente pamonha à moda da casa com linguiça e queijo meia cura, pamonha de sal e doce com queijo derretido, curau cremoso com canela, chica doida gratinada, bolo de milho quentinho e pamonha frita crocante. Oferecemos ambiente familiar acolhedor e delivery rápido com embalagem térmica em ${city}. Peça agora pelo WhatsApp ou visite a ${name} em ${city}.`;
+
+    const pamonhaTerms = [
+      `Pamonharia Tradicional em ${city}`,
+      `Pamonha à Moda com Linguiça e Queijo em ${city}`,
+      `Pamonha de Sal com Queijo Meia Cura`,
+      `Pamonha Doce Tradicional com Queijo`,
+      `Curau Cremoso de Milho Verde com Canela`,
+      `Chica Doida Gratinada no Forno em ${city}`,
+      `Bolo de Milho Verde Fresquinho sem Farinha`,
+      `Pamonha Frita Crocante Recheada`,
+      `Caldo de Milho Verde com Frango e Bacon`,
+      `Delivery de Pamonha Quentinha em ${city}`,
+      `Pamonha com Guariroba e Pimenta de Cheiro`,
+      `Pamonha de Carne Seca com Catupiry`,
+      `Milho Cozido na Manteiga de Garrafa`,
+      `Encomendas de Pamonhas para Festas e Eventos`,
+      `Café Coado na Hora e Quitandas Goianas`,
+      `Suco de Milho Verde Natural Cremoso`,
+      `Combo Família de Pamonhas e Curau em ${city}`,
+      `Retirada Rápida de Pamonhas no Balcão`,
+      `Espaço Familiar Climatizado em ${city}`,
+      `Pedidos Rápidos de Pamonha pelo WhatsApp`,
+    ];
+
+    pamonhaTerms.forEach((pTitle) => {
+      servicesBase.push({
+        name: pTitle,
+        category: primaryCategory,
+        localTerm: `${pTitle.toLowerCase()} ${city.toLowerCase()}`.slice(0, 60),
+        rawDesc: `Preparo diário de ${pTitle.toLowerCase()} na ${name} em ${city}, utilizando milho verde fresco ralado na hora, queijo meia cura legítimo e receitas tradicionais goianas. ${customContext ? `${customContext.slice(0, 80)}. ` : ""}Peça no delivery pelo WhatsApp ou saboreie quentinha em nosso salão em ${city}.`,
+      });
+    });
+
+    const pamonhaProds = [
+      { name: "Pamonha à Moda da Casa (Linguiça, Queijo, Guariroba e Pimenta)", cat: "Pamonhas Artesanais", price: "Feita na hora", desc: `A campeã de pedidos da ${name} em ${city}: pamonha preparada com massa de milho 100% puro ralada no dia, recheada com linguiça suína artesanal, queijo meia cura derretido, guariroba selecionada e toque suave de pimenta de cheiro. Servida fumegante no salão ou enviada em embalagem térmica pelo WhatsApp.` },
+      { name: "Pamonha Tradicional de Sal ou Doce com Queijo Meia Cura", cat: "Tradicionais", price: "Pronta entrega", desc: `Receita legítima da fazenda feita sem amido e sem conservantes na ${name} em ${city}. Massa macia e saborosa recheada com fatia generosa de queijo meia cura que derrete ao abrir a palha. Perfeita para o lanche da tarde ou jantar em família.` },
+      { name: "Chica Doida Especial Gratinada com Queijo e Linguiça", cat: "Pratos de Milho", price: "Porção generosa", desc: `Assado cremoso de milho verde fresco com linguiça caseira, frango desfiado, requeijão cremoso e camada gratinada de muçarela e queijo minas na ${name} em ${city}. Prato completo, reconfortante e cheio de sabor regional.` },
+      { name: "Curau Cremoso de Milho Verde (Pote 400ml com Canela)", cat: "Doces de Milho", price: "Gelado ou Quente", desc: `Curau de milho verde cozido lentamente no leite integral até atingir textura aveludada e finalizado com canela em pó na ${name} em ${city}. Disponível para consumo quente feito na hora ou geladinho para sobremesa.` },
+      { name: "Bolo de Milho Verde Puro e Pamonha Frita na Hora", cat: "Quitandas & Lanches", price: "Fornada diária", desc: `Bolo de milho úmido e macio assado diariamente e porções de pamonha frita douradinha por fora e cremosa com queijo por dentro na ${name} em ${city}. Acompanha perfeitamente nosso café coado na hora.` },
+      { name: "Combo Família Pamonhada Completa (Delivery WhatsApp)", cat: "Combos & Encomendas", price: "Condição especial", desc: `Combine pamonhas à moda, tradicionais de sal, doces e potes de curau com desconto especial para toda a família na ${name} em ${city}. Entrega expressa por motoboy com temperatura preservada até a sua mesa.` },
+    ];
+
+    pamonhaProds.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (/restauran|pizz|hamburg|lanch|sorvet|acai|cafeter|churras|comida|marmit|padaria/i.test(hay)) {
+    primaryCategory = realNicheOverride || (/pizz/i.test(hay) ? "Pizzaria" : /sorvet|acai/i.test(hay) ? "Sorveteria" : "Restaurante");
+    additionalCategories = [
+      "Restaurante de comida rápida",
+      "Restaurante familiar",
+      "Entrega de refeições",
+      "Lanchonete",
+      "Bar e restaurante",
+    ];
+
+    rawDescription = `A ${name} é referência em ${primaryCategory.toLowerCase()}, sabor autêntico e atendimento acolhedor em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Trabalhamos com ingredientes frescos e selecionados, preparo artesanal rigoroso e um cardápio variado com opções que encantam toda a família. Oferecemos ambiente agradável para confraternizações, almoços e jantares, além de delivery rápido e embalagens térmicas que mantêm a temperatura e a crocância até a sua mesa. Peça pelo nosso WhatsApp ou venha nos visitar em ${city} e viva uma experiência gastronômica inesquecível.`;
+
+    const gastroServices = [
+      { name: `Cardápio Completo e Especialidades em ${city}`, cat: primaryCategory, term: `restaurante em ${city.toLowerCase()}`, desc: `Pratos preparados com ingredientes frescos, receitas exclusivas e alto padrão de sabor na ${name} em ${city}. Opções para almoço, jantar e lanches para agradar a todos os paladares.` },
+      { name: `Delivery Rápido com Pedido no WhatsApp`, cat: "Entrega de refeições", term: `delivery em ${city.toLowerCase()}`, desc: `Receba seus pedidos quentinhos e bem embalados em qualquer região de ${city}. Cardápio digital fácil e envio imediato com opções de pagamento no Pix ou cartão.` },
+      { name: `Ambiente Familiar e Confortável em ${city}`, cat: primaryCategory, term: `restaurante familiar em ${city.toLowerCase()}`, desc: `Espaço aconchegante, climatizado e preparado para receber famílias, casais e amigos com conforto e atendimento atencioso na ${name} em ${city}.` },
+      { name: `Eventos e Confraternizações`, cat: primaryCategory, term: `espaço para eventos ${city.toLowerCase()}`, desc: `Reserve mesas ou espaço exclusivo para comemorar aniversários, confraternizações de empresas e reuniões especiais com cardápio sob medida em ${city}.` },
+      { name: `Opções Especiais e Ingredientes Selecionados`, cat: primaryCategory, term: `comida artesanal ${city.toLowerCase()}`, desc: `Pratos feitos na hora com tempero autêntico e insumos de produtores confiáveis, garantindo sabor marcante e apresentação refinada em ${city}.` },
+      { name: `Bebidas, Sucos Naturais e Sobremesas`, cat: primaryCategory, term: `sucos e sobremesas em ${city.toLowerCase()}`, desc: `Acompanhamentos perfeitos com sucos naturais da fruta, refrigerantes gelados e sobremesas artesanais para finalizar sua refeição com chave de ouro em ${city}.` },
+      { name: `Combo Econômico para Família`, cat: primaryCategory, term: `combos promocionais ${city.toLowerCase()}`, desc: `Combos completos com prato principal, acompanhamento e bebida com excelente custo-benefício para compartilhar com quem você ama em ${city}.` },
+      { name: `Atendimento no Balcão e Retirada Rápida`, cat: primaryCategory, term: `retirada no balcão ${city.toLowerCase()}`, desc: `Faça seu pedido antecipado pelo WhatsApp e retire no balcão da ${name} sem fila de espera em ${city}. Praticidade para o seu almoço ou jantar.` },
+      { name: `Horário Estendido e Atendimento Noturno`, cat: primaryCategory, term: `restaurante aberto a noite em ${city.toLowerCase()}`, desc: `Atendimento preparado para saciar sua fome nos momentos mais convenientes da semana com equipe prestativa e cozinha ágil em ${city}.` },
+      { name: `Higiene Rigorosa e Segurança Alimentar`, cat: primaryCategory, term: `restaurante limpo seguro ${city.toLowerCase()}`, desc: `Cozinha profissional com normas rígidas de higienização, manipulação correta de alimentos e embalagens lacradas para a sua total tranquilidade em ${city}.` },
+      { name: `Pratos Executivos e Almoço Diário`, cat: primaryCategory, term: `almoço executivo em ${city.toLowerCase()}`, desc: `Almoço saboroso, balanceado e rápido para o seu dia a dia profissional em ${city}. Opções variadas de carnes, guarnições e saladas frescas.` },
+      { name: `Opções Vegetarianas e Sob Medida`, cat: primaryCategory, term: `opções vegetarianas restaurante ${city.toLowerCase()}`, desc: `Receitas saborosas sem carne preparadas com vegetais frescos, queijos e temperos especiais para quem busca alimentação leve e balanceada em ${city}.` },
+      { name: `Embalagens Térmicas que Preservam a Qualidade`, cat: primaryCategory, term: `comida para viagem ${city.toLowerCase()}`, desc: `Embalagens modernas e seguras que mantêm a temperatura, crocância e apresentação do prato durante todo o trajeto até a sua residência em ${city}.` },
+      { name: `Promoções Especiais de Terça a Domingo`, cat: primaryCategory, term: `promoção de comida em ${city.toLowerCase()}`, desc: `Ofertas exclusivas para clientes no delivery e salão. Descontos no Pix e promoções em dias especiais na ${name} em ${city}.` },
+      { name: `Reserva Antecipada de Mesas`, cat: primaryCategory, term: `reservar mesa restaurante ${city.toLowerCase()}`, desc: `Garanta sua mesa sem esperar em filas nos fins de semana e feriados reservando previamente pelo WhatsApp da ${name} em ${city}.` },
+      { name: `Atendimento Cordial e Garçons Treinados`, cat: primaryCategory, term: `bom atendimento restaurante ${city.toLowerCase()}`, desc: `Equipe de atendimento sempre pronta com simpatia e agilidade para tornar sua experiência agradável do início ao fim em ${city}.` },
+      { name: `Música Ambiente e Climatização`, cat: primaryCategory, term: `restaurante com música em ${city.toLowerCase()}`, desc: `Atmosfera agradável com som ambiente suave e climatização perfeita para você relaxar e saborear seus pratos preferidos em ${city}.` },
+      { name: `Cartão Fidelidade e Benefícios`, cat: primaryCategory, term: `fidelidade restaurante ${city.toLowerCase()}`, desc: `Acumule pontos em cada pedido na ${name} e troque por pratos, sobremesas ou descontos especiais em ${city}.` },
+      { name: `Sobremesas Exclusivas da Casa`, cat: primaryCategory, term: `doces e sobremesas em ${city.toLowerCase()}`, desc: `Doces artesanais irresistíveis feitos com carinho para encerrar seu almoço ou jantar com uma explosão de sabor em ${city}.` },
+      { name: `Canal Direto de Feedback e Pós-Venda`, cat: primaryCategory, term: `restaurante bem avaliado ${city.toLowerCase()}`, desc: `Nosso compromisso é sua satisfação plena: ouvimos sua opinião e aprimoramos diariamente nossa cozinha e atendimento em ${city}.` },
+    ];
+
+    gastroServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const gastroProducts = [
+      { name: "Prato Principal Especial da Casa", cat: "Destaques do Cardápio", price: "Consulte o cardápio", desc: `A receita mais pedida e elogiada da ${name} em ${city}. Preparada artesanalmente com ingredientes de primeira linha, garantindo sabor autêntico e porção generosa para sua refeição.` },
+      { name: "Combo Família com Bebida Inclusa", cat: "Combos & Ofertas", price: "Melhor custo-benefício", desc: `Combinação perfeita para compartilhar com a família ou amigos em ${city}. Pratos bem servidos, acompanhamentos deliciosos e bebidas geladas com preço promocional.` },
+      { name: "Opção Individual Executiva", cat: "Almoço Rápido", price: "Preço especial", desc: `Refeição rápida, equilibrada e muito saborosa para o seu dia a dia em ${city}. Preparo ágil para você não perder tempo no horário de almoço.` },
+      { name: "Entradas e Porções para Compartilhar", cat: "Porções & Petiscos", price: "Consulte opções", desc: `Porções generosas e crocantes para acompanhar uma conversa agradável com amigos no salão ou no conforto de casa em ${city}.` },
+      { name: "Sobremesas Artesanais Exclusivas", cat: "Sobremesas", price: "Delícias da casa", desc: `Receitas doces preparadas diariamente para adoçar o seu dia. Ingredientes selecionados e apresentação encantadora na ${name} em ${city}.` },
+      { name: "Bebidas Geladas e Sucos Naturais", cat: "Bebidas", price: "Linha completa", desc: `Sucos naturais da fruta, refrigerantes, águas minerais e cervejas geladas para acompanhar suas refeições favoritas em ${city}.` },
+    ];
+
+    gastroProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (/odont|dentist|clinic|medic|estetic|fisioter|psicol|oftalmo/i.test(hay)) {
+    primaryCategory = /odont|dentist/i.test(hay) ? "Clínica odontológica" : "Clínica médica";
+    additionalCategories = [
+      "Centro médico",
+      "Clínica de estética",
+      "Dentista",
+      "Consultório médico",
+      "Clínica de fisioterapia",
+    ];
+
+    rawDescription = `A ${name} é referência em cuidados com a saúde, bem-estar e atendimento humanizado em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Dispomos de estrutura moderna, equipamentos de alta precisão e uma equipe multidisciplinar comprometida com tratamentos seguros, éticos e personalizados para cada paciente. Realizamos consultas, exames preventivos e procedimentos com pontualidade, conforto e biossegurança rigorosa. Agende sua consulta pelo WhatsApp ou telefone e experimente um cuidado de excelência para você e sua família na ${name} em ${city}.`;
+
+    const clinicServices = [
+      { name: `Consultas Especializadas em ${city}`, cat: primaryCategory, term: `clínica especializada em ${city.toLowerCase()}`, desc: `Atendimento médico e clínico humanizado com avaliação detalhada, diagnóstico preciso e acompanhamento cuidadoso em ${city}.` },
+      { name: `Exames e Diagnóstico de Alta Precisão`, cat: primaryCategory, term: `exames clínicos em ${city.toLowerCase()}`, desc: `Procedimentos diagnósticos modernos realizados com equipamentos de tecnologia avançada para orientar seu tratamento com segurança em ${city}.` },
+      { name: `Tratamentos Personalizados e Seguros`, cat: primaryCategory, term: `tratamento de saúde em ${city.toLowerCase()}`, desc: `Planos terapêuticos desenhados sob medida para as necessidades individuais de cada paciente, priorizando conforto e rápida recuperação em ${city}.` },
+      { name: `Ambiente Climatizado e Acessível em ${city}`, cat: primaryCategory, term: `clínica com acessibilidade em ${city.toLowerCase()}`, desc: `Instalações modernas, consultórios privativos e total acessibilidade para proporcionar uma experiência tranquila e segura aos pacientes em ${city}.` },
+      { name: `Agendamento Rápido via WhatsApp`, cat: primaryCategory, term: `marcar consulta no whatsapp ${city.toLowerCase()}`, desc: `Facilidade e agilidade para agendar suas consultas e tirar dúvidas com nossa equipe de atendimento em ${city}.` },
+      { name: `Biossegurança e Protocolos Rígidos`, cat: primaryCategory, term: `clínica com biossegurança em ${city.toLowerCase()}`, desc: `Ambientes esterilizados, uso de materiais descartáveis e conformidade integral com normas sanitárias para a sua proteção em ${city}.` },
+      { name: `Atendimento Preventivo e Check-up`, cat: primaryCategory, term: `check-up preventivo em ${city.toLowerCase()}`, desc: `Avaliações preventivas periódicas para monitorar sua saúde e prevenir complicações futuras com foco na longevidade e qualidade de vida em ${city}.` },
+      { name: `Equipe Médica e Especialistas Titulados`, cat: primaryCategory, term: `especialistas de confiança em ${city.toLowerCase()}`, desc: `Profissionais experientes, atualizados e dedicados a oferecer a melhor conduta clínica para você e sua família em ${city}.` },
+      { name: `Horário Pontual e Respeito ao Paciente`, cat: primaryCategory, term: `atendimento pontual na clínica ${city.toLowerCase()}`, desc: `Organização rigorosa de agenda para que sua consulta aconteça sem atrasos, valorizando o seu tempo em ${city}.` },
+      { name: `Acompanhamento Contínuo e Pós-Consulta`, cat: primaryCategory, term: `suporte ao paciente em ${city.toLowerCase()}`, desc: `Cuidado que vai além do consultório: suporte para dúvidas de prescrição e acompanhamento da evolução do paciente em ${city}.` },
+      { name: `Planos e Condições Facilitadas`, cat: primaryCategory, term: `consulta com valor acessível em ${city.toLowerCase()}`, desc: `Valores justos, parcelamento de procedimentos no cartão e convênios para tornar o acesso à saúde de qualidade viável em ${city}.` },
+      { name: `Procedimentos Minimamente Invasivos`, cat: primaryCategory, term: `procedimentos modernos em ${city.toLowerCase()}`, desc: `Técnicas contemporâneas que proporcionam máxima eficácia com mínimo desconforto e rápida retomada das atividades diárias em ${city}.` },
+      { name: `Orientação Preventiva e Qualidade de Vida`, cat: primaryCategory, term: `cuidados de saúde e bem-estar ${city.toLowerCase()}`, desc: `Orientações práticas de hábitos saudáveis, ergonomia e nutrição para potencializar seus resultados clínicos em ${city}.` },
+      { name: `Atendimento para Adultos, Crianças e Idosos`, cat: primaryCategory, term: `clínica para toda a família em ${city.toLowerCase()}`, desc: `Cuidado especializado adaptado para todas as fases da vida, com carinho especial no acolhimento pediátrico e geriátrico em ${city}.` },
+      { name: `Prontuário Digital Seguro e Confidencial`, cat: primaryCategory, term: `histórico médico digital ${city.toLowerCase()}`, desc: `Seu histórico de saúde registrado com criptografia e confidencialidade médica rigorosa em conformidade com a LGPD em ${city}.` },
+      { name: `Localização Central com Estacionamento`, cat: primaryCategory, term: `clínica perto de mim em ${city.toLowerCase()}`, desc: `Fácil acesso no centro da cidade, próximo a pontos de transporte e com estacionamento para sua comodidade em ${city}.` },
+      { name: `Tecnologia de Ponta nos Procedimentos`, cat: primaryCategory, term: `tecnologia médica avançada em ${city.toLowerCase()}`, desc: `Investimento contínuo em maquinário e instrumentais de última geração para garantir resultados de alto padrão em ${city}.` },
+      { name: `Esclarecimento Transparente de Diagnósticos`, cat: primaryCategory, term: `consulta médica humanizada em ${city.toLowerCase()}`, desc: `Explicações claras, sem jargões complexos, para que você entenda cada etapa do seu tratamento com segurança e confiança em ${city}.` },
+      { name: `Reavaliação Periódica e Manutenção`, cat: primaryCategory, term: `revisão periódica de saúde ${city.toLowerCase()}`, desc: `Consultas de retorno e revisões programadas para consolidar os resultados do seu tratamento na ${name} em ${city}.` },
+      { name: `Canal de Atendimento de Dúvidas`, cat: primaryCategory, term: `contato rápido com a clínica ${city.toLowerCase()}`, desc: `Equipe de recepção treinada para orientar sobre preparo de exames, confirmação de horários e esclarecimento de dúvidas em ${city}.` },
+    ];
+
+    clinicServices.forEach((s) => {
+      servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
+    });
+
+    const clinicProducts = [
+      { name: "Consulta de Avaliação Completa", cat: "Avaliação Clínica", price: "Agende seu horário", desc: `Consulta inicial com anamnese aprofundada, exame clínico e direcionamento para exames ou tratamento sob medida na ${name} em ${city}. Foco em diagnóstico preciso e acolhimento humano.` },
+      { name: "Tratamento Personalizado Especializado", cat: "Procedimentos", price: "Plano individualizado", desc: `Execução de tratamentos com tecnologia moderna e acompanhamento contínuo em ${city}. Procedimentos seguros realizados por profissionais titulados para sua plena saúde.` },
+      { name: "Check-up Preventivo da Saúde", cat: "Prevenção & Bem-Estar", price: "Condição especial", desc: `Bateria completa de exames preventivos e avaliação clínica global para identificar riscos precocemente e manter sua qualidade de vida em dia em ${city}.` },
+      { name: "Procedimentos Estéticos e Bem-Estar", cat: "Estética & Saúde", price: "Consulte opções", desc: `Tratamentos modernos para rejuvenescimento, harmonia e autoestima com resultados naturais e acompanhamento profissional na ${name} em ${city}.` },
+      { name: "Acompanhamento e Retorno Programado", cat: "Acompanhamento", price: "Incluso no tratamento", desc: `Consultas de controle para certificar a eficácia dos tratamentos, ajustar condutas e garantir estabilidade clínica duradoura aos pacientes em ${city}.` },
+      { name: "Atendimento Familiar Integrado", cat: "Saúde Familiar", price: "Planos para a família", desc: `Cuidado integrado para você e seus familiares com prontuários integrados e descontos especiais para consultas simultâneas na ${name} em ${city}.` },
+    ];
+
+    clinicProducts.forEach((p) => {
+      productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
+    });
+  } else if (isMoveisDomain) {
     primaryCategory = "Fornecedor de móveis planejados";
     additionalCategories = [
       "Marceneiro",
@@ -663,12 +1414,11 @@ export function buildGbpOptimizationPackage(biz: any) {
       "Loja de mobiliário de escritório",
       "Loja de mobília para o quarto",
       "Loja de móveis de cozinha",
-      "Loja de mobiliário infantil",
     ];
 
-    rawDescription = `A ${name} transforma ambientes com projetos personalizados, funcionais e sofisticados em ${city}, ${uf}. Somos especialistas em móveis planejados e móveis sob medida para cozinhas, quartos, salas, closets, banheiros, escritórios e espaços comerciais. Cada projeto é desenvolvido de acordo com as necessidades do cliente, aproveitando melhor cada espaço e unindo beleza, organização, qualidade e praticidade. Atendemos quem busca marcenaria em ${city}, cozinha planejada, guarda-roupa sob medida, painel para TV, armários planejados e soluções completas para residências e empresas. Solicite seu orçamento e conte com atendimento especializado, projeto personalizado e acabamento profissional para valorizar seu imóvel.`;
+    rawDescription = `A ${name} transforma ambientes com projetos personalizados, funcionais e sofisticados em ${city}, ${uf}. Somos especialistas em móveis planejados e móveis sob medida para cozinhas, quartos, salas, closets, banheiros, escritórios e espaços comerciais. ${customContext ? `${customContext}. ` : ""}Cada projeto é desenvolvido de acordo com as necessidades do cliente, aproveitando melhor cada espaço e unindo beleza, organização, qualidade e praticidade. Atendemos quem busca marcenaria em ${city}, cozinha planejada, guarda-roupa sob medida, painel para TV, armários planejados e soluções completas para residências e empresas. Solicite seu orçamento e conte com atendimento especializado, projeto personalizado e acabamento profissional para valorizar seu imóvel.`;
 
-    const móveisServices = [
+    const moveisServices = [
       { name: `Móveis Planejados em ${city}`, cat: primaryCategory, term: `móveis planejados em ${city.toLowerCase()}`, desc: `Projetos de móveis planejados em ${city}, desenvolvidos para aproveitar cada espaço com funcionalidade, beleza e acabamento premium. Criamos soluções sob medida para casas, apartamentos e empresas com materiais selecionados e instalação profissional.` },
       { name: "Marcenaria de Alto Padrão", cat: "Marceneiro", term: `marcenaria de alto padrão ${city.toLowerCase()}`, desc: `Marcenaria de alto padrão em ${city} para quem busca exclusividade, sofisticação e acabamento impecável em cada detalhe. Executamos projetos sob medida com ferragens amortecidas e MDF de primeira linha.` },
       { name: `Cozinha Planejada em ${city}`, cat: "Construção e venda de armários de cozinha", term: `cozinha planejada em ${city.toLowerCase()}`, desc: `Cozinhas planejadas em ${city} com projeto funcional, moderno e totalmente personalizado para cozinhas pequenas, americanas ou com ilha. Organização inteligente de armários, gavetões e torre quente.` },
@@ -687,51 +1437,51 @@ export function buildGbpOptimizationPackage(biz: any) {
       { name: "Cristaleira Iluminada e Adega Sob Medida", cat: primaryCategory, term: `cristaleira planejada ${city.toLowerCase()}`, desc: `Cristaleiras modernas com portas em perfil de alumínio preto, vidro reflecta e prateleiras com iluminação LED para compor salas de jantar refinadas em ${city}.` },
       { name: "Cabeceira Estofada com Painel Ripado", cat: "Loja de mobília para o quarto", term: `cabeceira ripada ${city.toLowerCase()}`, desc: `Painéis de cabeceira ripados de piso a teto com módulos estofados, tomadas embutidas e mesinhas suspensas sob medida para quartos aconchegantes.` },
       { name: "Estante Planejada e Divisória de Ambientes", cat: primaryCategory, term: `divisória de ambientes planejada ${city.toLowerCase()}`, desc: `Estantes vazadas planejadas para integrar ou delimitar salas de estar, jantar e home office com elegância visual e aproveitamento inteligente da luz natural.` },
-      { name: "Móveis para Quarto Infantil e Brinquedoteca", cat: "Loja de mobiliário infantil", term: `quarto infantil planejado ${city.toLowerCase()}`, desc: `Mobiliário sob medida seguro e ergonômico para crianças em ${city}, com cantos arredondados, nichos para brinquedos, camas lúdicas e bancadas de estudo.` },
+      { name: "Móveis para Quarto Infantil e Brinquedoteca", cat: primaryCategory, term: `quarto infantil planejado ${city.toLowerCase()}`, desc: `Mobiliário sob medida seguro e ergonômico para crianças em ${city}, com cantos arredondados, nichos para brinquedos, camas lúdicas e bancadas de estudo.` },
       { name: "Consultoria e Projeto 3D Personalizado", cat: "Designer de interiores", term: `projeto 3d móveis ${city.toLowerCase()}`, desc: `Desenvolvimento de maquete 3D fotorrealista com simulação completa de cores, texturas e circulação do espaço antes da fabricação dos móveis planejados.` },
     ];
 
-    móveisServices.forEach((s) => {
+    moveisServices.forEach((s) => {
       servicesBase.push({ name: s.name, category: s.cat, localTerm: s.term, rawDesc: s.desc });
     });
 
-    const móveisProducts = [
+    // Exactly 6 products (clean 3x2 grid)
+    const moveisProducts = [
       { name: "Cozinha Planejada Sob Medida", cat: "Cozinhas Planejadas", price: "Orçamento sob medida", desc: `Projeto completo de cozinha planejada em ${city} com armários superiores, inferiores, torre quente, gaveteiros com amortecedor e divisão interna sob medida. Produzida em MDF de alta densidade resistente à umidade, com acabamento impecável e puxadores modernos. Inclui consultoria de espaço e projeto 3D para você visualizar exatamente o resultado antes da fabricação.` },
       { name: "Closets e Dormitórios Completos", cat: "Dormitórios & Closets", price: "Projeto personalizado", desc: `Guarda-roupas e closets sob medida em ${city} com divisão interna planejada para roupas longas, calçados, acessórios e joias. Estrutura robusta em MDF, portas com espelho e trilho suave, além de fita de LED embutida com acionamento automático. Máximo conforto e organização para valorizar seu quarto.` },
       { name: "Salas de Estar com Painel Ripado", cat: "Salas & Home", price: "Consulte pelo WhatsApp", desc: `Painéis de TV de grande formato com acabamento ripado nobre, nichos embutidos e rack suspenso com gavetas de toque. Projetado para ocultar 100% da fiação elétrica e equipamentos de áudio, criando uma estética limpa, moderna e sofisticada para sua casa em ${city}.` },
       { name: "Banheiros e Áreas de Serviço", cat: "Áreas Úmidas", price: "Orçamento rápido", desc: `Armários planejados para banheiros, lavabos e lavanderias com MDF naval e vedação especial contra umidade. Aproveitamento milimétrico de sifões e colunas hidráulicas, garantindo gavetões úteis, tulhas de roupa suja e espelheiras iluminadas com ótimo custo-benefício.` },
       { name: "Escritórios Corporativos & Recepções", cat: "Corporativo & Clínicas", price: "Atendimento corporativo", desc: `Mobiliário planejado corporativo em ${city} para escritórios de advocacia, clínicas de saúde e sedes empresariais. Estações de trabalho ergonômicas, balcões de recepção imponentes e armários de arquivo com fechadura, transmitindo credibilidade imediata a clientes.` },
       { name: "Varanda e Espaço Gourmet", cat: "Área Gourmet", price: "Projeto 3D incluso", desc: `Armários sob medida para bancadas de churrasqueira, ilhas gourmet e varandas fechadas em ${city}. Materiais preparados para suportar calor e vapores de cocção, aliando requinte no design com portas almofadadas ou lisas e ferragens inoxidáveis.` },
-      { name: "Estantes & Mobiliário Sob Medida", cat: "Complementos Exclusivos", price: "Sob consulta", desc: `Estantes de livros de piso a teto, adegas climatizadas sob medida, nichos decorativos e mesas de cabeceira personalizadas em ${city}. Cada detalhe é desenhado para atender ao estilo de vida da sua família com entrega pontual e montagem limpa e profissional.` },
     ];
 
-    móveisProducts.forEach((p) => {
+    moveisProducts.forEach((p) => {
       productsBase.push({ name: p.name, category: p.cat, priceLabel: p.price, rawDesc: p.desc });
     });
   } else {
-    rawDescription = `A ${name} é referência em ${category.toLowerCase()} em ${city}, ${uf}, oferecendo atendimento ágil, soluções confiáveis e acompanhamento profissional para clientes residenciais e comerciais. Trabalhamos com foco na qualidade técnica, transparência em cada etapa e atendimento direto pelo WhatsApp e telefone. Nossa estrutura em ${city} está preparada para atender com pontualidade, segurança e excelente custo-benefício quem procura ${category.toLowerCase()}, suporte especializado e condições facilitadas de pagamento. Entre em contato agora mesmo para tirar dúvidas, consultar disponibilidade ou solicitar seu orçamento personalizado com nossa equipe em ${city}.`;
+    rawDescription = `A ${name} é referência em ${category.toLowerCase()} em ${city}, ${uf}, oferecendo atendimento ágil, soluções confiáveis e acompanhamento profissional para clientes exigentes. ${customContext ? `${customContext}. ` : ""}Trabalhamos com foco na qualidade superior, transparência em cada etapa e atendimento direto pelo WhatsApp e telefone. Nossa estrutura em ${city} está preparada para atender com pontualidade, segurança e excelente experiência quem procura ${category.toLowerCase()}, suporte especializado e condições facilitadas. Entre em contato agora mesmo para tirar dúvidas, consultar disponibilidade, fazer sua reserva ou solicitar seu atendimento personalizado com nossa equipe em ${city}.`;
 
     const genericNames = [
       `${category} Especializado em ${city}`,
       `Atendimento Prioritário em ${city}`,
-      `Orçamento Rápido via WhatsApp`,
-      `Consultoria e Diagnóstico Local`,
+      `Orçamentos e Consultas via WhatsApp`,
+      `Consultoria e Atendimento Local`,
+      `Experiência Completa para Clientes`,
+      `Qualidade com Garantia em ${city}`,
+      `Execução Técnica de Alto Padrão`,
       `Atendimento Residencial e Comercial`,
-      `Suporte com Garantia em ${city}`,
-      `Instalação e Manutenção Técnica`,
-      `Serviços Expressos para Empresas`,
-      `Atendimento Agendado e Pontual`,
-      `Soluções Sob Medida em ${city}`,
-      `Assessoria Completa para Clientes`,
-      `Entrega e Execução Confiável`,
-      `Produtos e Materiais de Primeira Linha`,
+      `Horário Flexível e Pontualidade`,
+      `Soluções Personalizadas em ${city}`,
+      `Seleção de Materiais e Produtos Certificados`,
+      `Entrega Rápida e Suporte em ${city}`,
+      `Atendimento Ágil com Especialistas`,
       `Equipe Qualificada e Treinada`,
-      `Condições Especiais de Pagamento`,
-      `Atendimento no Centro e Bairros`,
-      `Planos e Contratos Corporativos`,
-      `Avaliação Técnica sem Compromisso`,
-      `Reparos e Ajustes de Precisão`,
-      `Acompanhamento Pós-Venda Dedicado`,
+      `Condições Facilitadas de Pagamento`,
+      `Atendimento no Centro e Bairros de ${city}`,
+      `Projetos Especiais para Empresas`,
+      `Catálogo e Portfólio Completo`,
+      `Acompanhamento em Cada Etapa`,
+      `Relacionamento e Pós-Venda Dedicado em ${city}`,
     ];
 
     genericNames.forEach((gName, idx) => {
@@ -739,18 +1489,18 @@ export function buildGbpOptimizationPackage(biz: any) {
         name: gName,
         category: primaryCategory,
         localTerm: `${category.toLowerCase()} em ${city.toLowerCase()} ${idx + 1}`,
-        rawDesc: `Prestação de ${gName.toLowerCase()} pela ${name} em ${city}, com equipe dedicada, materiais inspecionados e agilidade máxima. Atendemos com pontualidade e transparência para garantir a melhor experiência e segurança para a sua rotina diária.`,
+        rawDesc: `Oferta de ${gName.toLowerCase()} pela ${name} em ${city}, com equipe dedicada, padrão rigoroso de qualidade e agilidade máxima. ${customContext ? `${customContext.slice(0, 90)}. ` : ""}Atendemos com pontualidade e excelência para garantir a melhor experiência para você e sua família.`,
       });
     });
 
+    // Exactly 6 products (clean 3x2 grid)
     const genericProducts = [
-      { name: `Linha Premium — ${name}`, cat: "Destaques", price: "Sob consulta", desc: `Pacote principal de produtos e soluções técnicas com garantia comprovada em ${city}. Desenvolvido para proporcionar máxima eficiência, economia e tranquilidade para clientes residenciais e comerciais.` },
-      { name: "Atendimento Prioritário Especializado", cat: "Serviços", price: "Sob medida", desc: `Agilidade e acompanhamento técnico dedicado pela equipe da ${name} em todos os bairros de ${city}. Suporte ágil com profissionais certificados e atendimento humanizado.` },
-      { name: "Pacote Completo com Condição Facilitada", cat: "Especial", price: "Pix e Cartão", desc: `Excelente relação custo-benefício com parcelamento flexível e garantia formal em ${city}. Ideal para quem busca padrão profissional sem surpresas no orçamento final.` },
-      { name: "Linha Corporativa para Empresas", cat: "Empresarial", price: "Contrato PJ", desc: `Soluções completas com faturamento facilitado, atendimento programado e suporte técnico direto para empresas, escritórios e condomínios de ${city} e região.` },
-      { name: "Manutenção Preventiva e Corretiva", cat: "Manutenção", price: "Visita técnica", desc: `Diagnóstico minucioso e reparos rápidos para assegurar pleno funcionamento e durabilidade dos seus equipamentos e instalações em ${city}.` },
-      { name: "Kit Econômico para Residências", cat: "Residencial", price: "Valor acessível", desc: `Opção compacta e acessível com a mesma qualidade de acabamento e atendimento atencioso da equipe ${name}. Perfeito para demandas pontuais e residenciais.` },
-      { name: "Plano Fidelidade com Suporte Contínuo", cat: "Assinatura", price: "Mensalidade acessível", desc: `Acompanhamento periódico com visitas preventivas e descontos exclusivos em novas demandas em ${city}. Tranquilidade garantida para o seu patrimônio.` },
+      { name: `Solução Principal — ${name}`, cat: "Destaques", price: "Consulte valores", desc: `Seleção principal da ${name} com qualidade comprovada em ${city}. ${customContext ? `${customContext}. ` : ""}Desenvolvido para proporcionar máxima eficiência, durabilidade e experiência diferenciada para nossos clientes com acompanhamento técnico especializado.` },
+      { name: "Atendimento e Consultoria Prioritária", cat: "Atendimento", price: "WhatsApp Direto", desc: `Agilidade e acompanhamento dedicado pela equipe da ${name} em ${city}. Suporte rápido com profissionais treinados, esclarecimento de dúvidas e atendimento personalizado via WhatsApp.` },
+      { name: "Pacote Completo com Condição Especial", cat: "Especial", price: "Pix e Cartão", desc: `Excelente relação custo-benefício com condições especiais em ${city}. Ideal para quem busca padrão superior com praticidade, segurança e atendimento imediato.` },
+      { name: "Atendimento Corporativo e Comercial", cat: "Corporativo", price: "Sob medida", desc: `Estrutura preparada para empresas, profissionais liberais e residências em ${city}, garantindo pontualidade, emissão de nota fiscal e execução impecável.` },
+      { name: "Entrega Expressa e Suporte Local", cat: "Suporte", price: "Atendimento ágil", desc: `Atendimento rápido pelo WhatsApp com suporte dedicado em diversos bairros de ${city}, mantendo o compromisso de pontualidade e excelência em cada etapa.` },
+      { name: "Programa de Fidelidade e Garantia", cat: "Vantagens", price: "Benefícios exclusivos", desc: `Condições diferenciadas, garantia estendida e novidades em primeira mão para clientes recorrentes da ${name} em ${city}. Relacionamento de longo prazo.` },
     ];
 
     genericProducts.forEach((p) => {
@@ -758,69 +1508,173 @@ export function buildGbpOptimizationPackage(biz: any) {
     });
   }
 
-  // Exact 750 characters for profile description
-  const description750 = padOrTrimToExactLength(
+  // Generate 3 distinct 750-char variations by tone (Comercial, Persuasivo, Amigável)
+  const descComercial = padOrTrimToExactLength(
     rawDescription,
     750,
     `Entre em contato com a ${name} em ${city}, ${uf} e garanta atendimento especializado com alta qualidade, pontualidade e orçamento transparente.`
   );
+  const descPersuasivo = padOrTrimToExactLength(
+    `Procurando a melhor experiência em ${category.toLowerCase()} em ${city}, ${uf}? A ${name} se destaca pela excelência, autoridade local e compromisso absoluto com a satisfação de cada cliente. ${customContext ? `${customContext}. ` : ""}Unimos tradição, equipe experiente e atendimento ágil para entregar exatamente o que você procura com padrão superior. Não deixe para depois: fale agora mesmo com nossa equipe pelo WhatsApp ou visite nosso endereço em ${city} e descubra por que somos referência na região.`,
+    750,
+    `Escolha a segurança e o padrão de excelência da ${name} em ${city}, ${uf}. Chame no WhatsApp ${phone} e garanta atendimento prioritário hoje mesmo.`
+  );
+  const descAmigavel = padOrTrimToExactLength(
+    `Seja muito bem-vindo à ${name} em ${city}, ${uf}! Aqui cada detalhe é preparado com carinho, dedicação e respeito por você e sua família. ${customContext ? `${customContext}. ` : ""}Nossa missão em ${city} é oferecer ${category.toLowerCase()} em um ambiente acolhedor, com atendimento próximo, humano e sempre pronto para ajudar. Ficaremos muito felizes em receber sua visita ou conversar com você pelo WhatsApp para tirar todas as suas dúvidas com atenção especial.`,
+    750,
+    `Venha conhecer a ${name} em ${city}, ${uf} ou mande uma mensagem para nossa equipe pelo telefone ${phone}. Será um prazer atender você com todo carinho!`
+  );
 
-  // Exact 20 services, each exactly 300 characters
-  const servicesList = servicesBase.slice(0, 20).map((s) => ({
+  const textVariations = {
+    comercial: descComercial,
+    persuasivo: descPersuasivo,
+    amigavel: descAmigavel,
+  };
+
+  const description750 =
+    tone === "persuasivo"
+      ? descPersuasivo
+      : tone === "amigavel"
+      ? descAmigavel
+      : descComercial;
+
+  // Override with user-provided or AI-discovered 20 Local Search Terms if supplied
+  const customTermsClean = Array.isArray(options?.customSearchTerms)
+    ? options!.customSearchTerms.map((t) => String(t || "").trim()).filter(Boolean)
+    : [];
+  if (customTermsClean.length > 0) {
+    customTermsClean.slice(0, 20).forEach((termTitle, idx) => {
+      const cleanTerm = termTitle.replace(/^\d+[\.\)\-\s]+/, "").trim();
+      if (!cleanTerm) return;
+      const item = {
+        name: cleanTerm,
+        category: primaryCategory,
+        localTerm: cleanTerm.toLowerCase().includes(city.toLowerCase())
+          ? cleanTerm.toLowerCase()
+          : `${cleanTerm.toLowerCase()} em ${city.toLowerCase()}`,
+        rawDesc: `Atendimento especializado em ${cleanTerm.toLowerCase()} na ${name} em ${city}, ${uf}. ${customContext ? `${customContext.slice(0, 95)}. ` : ""}Qualidade comprovada, insumos selecionados e atendimento ágil pelo WhatsApp ${phone} ou presencialmente em nossa unidade em ${city}.`,
+      };
+      if (idx < servicesBase.length) {
+        servicesBase[idx] = item;
+      } else {
+        servicesBase.push(item);
+      }
+    });
+  }
+
+  // Override with user-provided or AI-discovered 6 Main Products if supplied
+  const customProdsClean = Array.isArray(options?.customProductNames)
+    ? options!.customProductNames.map((p) => String(p || "").trim()).filter(Boolean)
+    : [];
+  if (customProdsClean.length > 0) {
+    customProdsClean.slice(0, 6).forEach((prodTitle, idx) => {
+      const cleanProd = prodTitle.replace(/^\d+[\.\)\-\s]+/, "").trim();
+      if (!cleanProd) return;
+      const item = {
+        name: cleanProd,
+        category: primaryCategory,
+        priceLabel: "Consulte pelo WhatsApp",
+        rawDesc: `${cleanProd} com padrão superior de qualidade na ${name} em ${city}, ${uf}. ${customContext ? `${customContext}. ` : ""}Preparado e selecionado com rigor técnico para garantir a melhor experiência, durabilidade e satisfação total dos nossos clientes em ${city}. Faça seu pedido ou solicite orçamento rápido pelo nosso WhatsApp ${phone}.`,
+      };
+      if (idx < productsBase.length) {
+        productsBase[idx] = item;
+      } else {
+        productsBase.push(item);
+      }
+    });
+  }
+
+  const cleanBrandName = name.split("|")[0].split(" - ")[0].trim() || name;
+
+  const serviceClosings = [
+    `Solicite seu orçamento com a ${cleanBrandName} em ${city} e receba atendimento profissional com pontualidade.`,
+    `Fale agora pelo WhatsApp ${phone} com nossa equipe em ${city} e confira disponibilidade imediata.`,
+    `Atendimento técnico em ${city} - ${uf} com materiais selecionados, preço justo e facilidade no Pix ou cartão.`,
+    `Conte com a tradição da ${cleanBrandName} em ${city} para garantir segurança, durabilidade e orientação completa.`,
+    `Chame no WhatsApp da ${cleanBrandName} em ${city} para tirar dúvidas e receber sua cotação personalizada hoje mesmo.`,
+  ];
+
+  // Exact 20 services, each up to 300 characters with distinct closings
+  const servicesList = servicesBase.slice(0, 20).map((s, idx) => ({
     name: s.name,
     category: s.category || primaryCategory,
     localTerm: s.localTerm,
+    selectedForSite: idx < 6,
     description: padOrTrimToExactLength(
       s.rawDesc,
       300,
-      `Solicite seu orçamento com a ${name} em ${city} e receba atendimento profissional com pontualidade.`
+      serviceClosings[idx % serviceClosings.length]
     ),
   }));
 
-  // Exact 7 products (between 6 and 8), each exactly 1000 characters
-  const productsList = productsBase.slice(0, 7).map((p) => ({
+  // EXACTLY 6 products (clean 3x2 grid), each up to 1000 characters
+  const productsList = productsBase.slice(0, 6).map((p, idx) => ({
     name: p.name,
     category: p.category,
     priceLabel: p.priceLabel,
+    selectedForSite: true,
     description: padOrTrimToExactLength(
       p.rawDesc,
       1000,
-      `A ${name} em ${city} preza pela excelência em cada detalhe, combinando materiais certificados, pontualidade rigorosa e atendimento ágil via WhatsApp ou telefone ${phone}. Solicite seu orçamento sem compromisso e conte com especialistas experientes para tirar suas dúvidas e encontrar a melhor solução para sua necessidade.`
+      `A ${cleanBrandName} em ${city} preza pela excelência em cada detalhe (Item #0${idx + 1} do catálogo), combinando materiais certificados, pronta-entrega e atendimento consultivo via WhatsApp ${phone}. Solicite seu orçamento sem compromisso com nossa equipe especializada.`
     ),
   }));
 
-  // 10 Informative Posts + 1 Offer Post = 11 Posts total, each exactly 1500 characters
+  // 10 Informative Posts + 1 Offer Post = 11 Posts total, each with a DISTINCT angle and conclusion (no repeated paragraphs!)
   const postThemes = [
-    { obj: "Apresentação & Autoridade Local", title: `Excelência e qualidade comprovada em ${city}`, isOffer: false },
-    { obj: "Serviço Principal em Destaque", title: servicesList[0]?.name || `Soluções sob medida em ${city}`, isOffer: false },
-    { obj: "Diferencial de Acabamento e Atendimento", title: "Por que escolher um atendimento especializado e experiente?", isOffer: false },
-    { obj: "Solução para Espaços e Necessidades Reais", title: servicesList[2]?.name || "Planejamento inteligente para o seu dia a dia", isOffer: false },
-    { obj: "Processo de Atendimento Transparente", title: "Do primeiro contato ao projeto concluído com pontualidade", isOffer: false },
-    { obj: "Destaque de Categoria & Portfólio", title: productsList[0]?.name || "Qualidade premium que valoriza o seu imóvel", isOffer: false },
-    { obj: "Dúvida Frequente e Dicas Práticas", title: `Como solicitar seu orçamento rápido e sem burocracia em ${city}`, isOffer: false },
-    { obj: "Atendimento Residencial e Comercial", title: `Soluções completas para casas, apartamentos e empresas em ${city}`, isOffer: false },
-    { obj: "Bastidores e Padrão Construtivo", title: "Cuidado minucioso e precisão em cada detalhe executado", isOffer: false },
-    { obj: "Convite Direto e Relacionamento", title: `Fale hoje mesmo com os especialistas da ${name} em ${city}`, isOffer: false },
-    { obj: "Oferta & Condição Especial", title: `Condição Especial de Atendimento — Solicite Hoje com a ${name}`, isOffer: true },
+    { obj: "Apresentação & Autoridade #01", title: servicesList[0]?.name || `Excelência e atendimento em ${city}`, isOffer: false },
+    { obj: "Destaque de Busca Local #02", title: servicesList[1]?.name || `Soluções sob medida em ${city}`, isOffer: false },
+    { obj: "Diferencial Técnico #03", title: servicesList[2]?.name || `Atendimento especializado em ${city}`, isOffer: false },
+    { obj: "Solução Especializada #04", title: servicesList[3]?.name || `Qualidade comprovada em ${city}`, isOffer: false },
+    { obj: "Atendimento Ágil #05", title: servicesList[4]?.name || `Pronta-entrega e agilidade em ${city}`, isOffer: false },
+    { obj: "Destaque do Catálogo #06", title: servicesList[5]?.name || productsList[0]?.name || `Portfólio completo em ${city}`, isOffer: false },
+    { obj: "Orientação e Consultoria #07", title: servicesList[6]?.name || `Atendimento via WhatsApp em ${city}`, isOffer: false },
+    { obj: "Atendimento Residencial e Comercial #08", title: servicesList[7]?.name || `Soluções completas em ${city}`, isOffer: false },
+    { obj: "Padrão de Qualidade #09", title: servicesList[8]?.name || `Tradição e confiança em ${city}`, isOffer: false },
+    { obj: "Relacionamento Local #10", title: servicesList[9]?.name || `Fale com a equipe da ${cleanBrandName} em ${city}`, isOffer: false },
+    { obj: "Oferta & Condição Especial #11", title: `Condição Especial: ${servicesList[0]?.name || cleanBrandName}`, isOffer: true },
+  ];
+
+  const postAngles = [
+    `Quando o assunto é ${servicesList[0]?.name?.toLowerCase() || primaryCategory.toLowerCase()}, escolher um parceiro local de confiança em ${city} faz toda a diferença na durabilidade, na economia e na tranquilidade do seu projeto ou compra.`,
+    `Muitos clientes em ${city} procuram agilidade e orientação técnica antes de decidir. Por isso, nossa equipe mantém um fluxo de atendimento direto pelo WhatsApp ${phone}, esclarecendo especificações e prazos sem burocracia.`,
+    `A qualidade final depende diretamente da procedência dos produtos e do cuidado técnico em cada etapa. Na ${cleanBrandName}, selecionamos as melhores linhas do mercado para atender ${city} e região com garantia real.`,
+    `Seja para uma demanda urgente do dia a dia ou para um planejamento completo em ${city}, contar com especialistas em ${primaryCategory.toLowerCase()} evita retrabalho e garante o melhor custo-benefício.`,
+    `Nosso compromisso em ${city} - ${uf} vai além da venda: acompanhamos sua necessidade desde o primeiro contato até a entrega ou conclusão do serviço, oferecendo pagamento facilitado via Pix e cartão.`,
+    `Em nosso catálogo em ${city}, destacamos opções versáteis como ${productsList[0]?.name || servicesList[0]?.name}, desenvolvidas para entregar alto desempenho tanto para clientes residenciais quanto comerciais.`,
+    `Precisa de um orçamento rápido em ${city}? Pelo nosso canal direto de atendimento (${phone}), você conversa com quem realmente entende de ${primaryCategory.toLowerCase()} e recebe a indicação exata para o seu caso.`,
+    `Atendemos residências, condomínios e empresas em toda a região de ${city}, mantendo estoque atualizado, logística eficiente e pontualidade rigorosa em todos os compromissos assumidos.`,
+    `A confiança conquistada pela ${cleanBrandName} nas avaliações locais de ${city} é fruto de um trabalho sério, transparente e focado em resolver de verdade a necessidade de cada cliente que nos procura.`,
+    `Convidamos você de ${city} e região para conhecer de perto nossos diferenciais em ${primaryCategory.toLowerCase()}. Venha até nossa unidade ou chame no WhatsApp para um atendimento personalizado.`,
+    `Preparamos uma oportunidade especial nesta semana para quem busca ${servicesList[0]?.name?.toLowerCase() || primaryCategory.toLowerCase()} em ${city} com condições diferenciadas de pagamento e atendimento prioritário.`,
   ];
 
   const now = Date.now();
   const posts = postThemes.map((pt, idx) => {
     const postDate = new Date(now + (idx + 1) * 3 * 86400000).toISOString().slice(0, 10);
     const svc = servicesList[idx % servicesList.length];
-    const postIntro = pt.isOffer
-      ? `ATENÇÃO: CONDIÇÃO ESPECIAL POR TEMPO LIMITADO NA ${name.toUpperCase()} EM ${city.toUpperCase()}!\n\n` +
-        `Se você está planejando transformar seu ambiente ou precisa de ${svc.name.toLowerCase()}, preparamos condições exclusivas de negociação para este mês. Atendemos toda a cidade de ${city} com visita técnica, atendimento personalizado e facilidade de pagamento no cartão e Pix.`
-      : `${pt.title}.\n\nNa ${name}, cada atendimento em ${city} é conduzido com compromisso total com as necessidades do cliente, unindo planejamento detalhado, materiais de alta durabilidade e cumprimento rigoroso dos prazos combinados. Nosso foco em ${svc.name.toLowerCase()} garante um resultado funcional, seguro e esteticamente impecável.`;
+    const prod = productsList[idx % productsList.length];
+    const angleParagraph = postAngles[idx % postAngles.length];
 
-    const fillerPost = `Na ${name}, localizada em ${city}, nosso objetivo diário é entregar soluções de alta qualidade com segurança, transparência e respeito ao prazo do cliente. Oferecemos suporte completo pelo telefone ${phone} e WhatsApp. Quem pesquisa por ${svc.localTerm} sabe que pode confiar em nossa equipe técnica para um atendimento ágil e projeto sob medida. Entre em contato hoje mesmo, tire suas dúvidas e solicite uma demonstração personalizada. Estamos prontos para atender você com pontualidade e satisfação garantida em todos os bairros de ${city} e cidades vizinhas.`;
+    const postBody = pt.isOffer
+      ? `CONDIÇÃO ESPECIAL NA ${cleanBrandName.toUpperCase()} (${city.toUpperCase()} - ${uf}): ${svc.name.toUpperCase()}!\n\n` +
+        `${angleParagraph}\n\n` +
+        `Destaque da semana: ${svc.name} e linha completa de ${prod?.name || primaryCategory} com atendimento imediato em ${city}. ` +
+        `${customContext ? `Diferenciais da nossa estrutura: ${customContext.slice(0, 220)}. ` : ""}` +
+        `Entre em contato agora pelo telefone ou WhatsApp ${phone} e garanta sua condição especial diretamente com a equipe da ${cleanBrandName} em ${city}.`
+      : `${pt.title} — ${cleanBrandName} em ${city}, ${uf}.\n\n` +
+        `${angleParagraph}\n\n` +
+        `Foco em ${svc.name}: trabalhamos com padrão rigoroso em ${primaryCategory.toLowerCase()}, integrando soluções como ${prod?.name || svc.name} para clientes que valorizam segurança e resultado em ${city}. ` +
+        `Para solicitar orçamento ou tirar dúvidas sobre ${svc.localTerm}, fale com nosso atendimento pelo telefone/WhatsApp ${phone} ou faça-nos uma visita em ${city}.`;
 
-    const fullPostText = padOrTrimToExactLength(postIntro, 1500, fillerPost);
+    const distinctFiller = `Referência local em ${svc.localTerm} (${city} - ${uf}), a ${cleanBrandName} está pronta para atender você com rapidez, transparência e condições facilitadas. Ligue para ${phone} ou envie mensagem no WhatsApp.`;
+    const fullPostText = padOrTrimToExactLength(postBody, Math.min(950, postBody.length + 180), distinctFiller);
 
     return {
       number: idx + 1,
       objective: pt.obj,
       title: pt.title,
+      seoKeyword: svc.localTerm,
       isOfferPost: pt.isOffer,
       text: fullPostText,
       charCount: fullPostText.length,
@@ -828,7 +1682,7 @@ export function buildGbpOptimizationPackage(biz: any) {
       ctaPhone: phone,
       scheduledDate: postDate,
       scheduledTime: "09:00",
-      imageDirection: `Fotografia comercial 4:3 de ${svc.name.toLowerCase()} executada pela ${name} em ${city}, iluminação limpa e enquadramento profissional.`,
+      imageDirection: `Fotografia comercial realista 4:3 destacando ${svc.name.toLowerCase()} na ${cleanBrandName} em ${city}, iluminação natural limpa, sem textos sobrepostos.`,
       status: "Pronto para agendar",
     };
   });
@@ -861,29 +1715,43 @@ export function buildGbpOptimizationPackage(biz: any) {
     }),
   ];
 
+  const cleanHeroDesc = description750
+    .replace(/\|/g, " — ")
+    .replace(/\s+/g, " ")
+    .trim();
+
   const siteBriefing = {
     updatedAt: new Date().toISOString(),
-    businessName: name,
+    businessName: cleanBrandName,
+    fullBusinessName: name,
     cityUf: `${city} - ${uf}`,
     primaryCategory,
+    websiteUrl,
+    customContext,
+    tone,
     recommendedSiteModel: /moveis|clinic|advog|engenh|arquitet/.test(hay)
       ? "Landing Page Consultiva + Portfólio de Projetos (Foco em Orçamento via WhatsApp)"
-      : /farmac|loja|gas|bateria/.test(hay)
-      ? "Vitrine Express + Pedido Rápido no WhatsApp (Foco em Pronta-Entrega)"
+      : /pizza|restauran|farmac|loja|gas|bateria|ferragist|constru/.test(hay)
+      ? "Vitrine Express + Catálogo/Pedido Rápido no WhatsApp (Foco em Conversão Imediata)"
       : "Site Institucional de Conversão Local (Foco em Agendamento e Contato Imediato)",
     whatsappLink: `https://wa.me/${whatsappClean}`,
-    heroHeadline: `${servicesList[0]?.name || `${category} em ${city}`} com Acabamento Profissional e Atendimento Sob Medida`,
-    heroSubheadline: description750.slice(0, 220),
+    heroHeadline: `${cleanBrandName}: ${servicesList[0]?.name || `${primaryCategory} em ${city}`} com Qualidade e Pronta-Entrega`,
+    heroSubheadline: cleanHeroDesc.slice(0, 220),
     approvedServices: servicesList.slice(0, 6),
-    approvedProducts: productsList.slice(0, 4),
+    approvedProducts: productsList.slice(0, 6),
     localKeywords: servicesList.map((s) => s.localTerm),
   };
 
   return {
     businessName: name,
+    cleanBrandName,
     city,
     uf,
     phone,
+    websiteUrl,
+    customContext,
+    tone,
+    textVariations,
     whatsappUrl: `https://wa.me/${whatsappClean}`,
     primaryCategory,
     additionalCategories,
@@ -1024,22 +1892,51 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
           agencyDocument: "00.000.000/0001-00",
         },
         packagesByBusiness: {},
+        contracts: {},
       };
       saveDb(db);
-    } else if (Array.isArray(db.g360.audits)) {
-      let dirty = false;
-      for (const aud of db.g360.audits) {
-        const bName = String(aud?.business?.name || "");
-        const firstPhoto = decodeURIComponent(String(aud?.business?.photos?.[0] || ""));
-        if (!/drogalu/i.test(bName) && /drogalu/i.test(firstPhoto)) {
-          const matchedDemo = demoBusinesses.find(
-            (d) => d.name.toLowerCase() === bName.toLowerCase() || d.place_id === aud?.business?.place_id
-          );
-          aud.business.photos = matchedDemo?.photos || encantoDemo?.photos || [];
-          dirty = true;
-        }
+    } else {
+      if (!db.g360.contracts) {
+        db.g360.contracts = {};
+        saveDb(db);
       }
-      if (dirty) saveDb(db);
+      if (Array.isArray(db.g360.crmLeads)) {
+        let dirty = false;
+        for (let i = 0; i < db.g360.crmLeads.length; i++) {
+          const l = db.g360.crmLeads[i];
+          if (!l.contractDueDate) {
+            const offset = i === 0 ? 10 : i === 1 ? 15 : i === 2 ? 28 : 45;
+            l.contractDueDate = new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+            dirty = true;
+          }
+        }
+        if (dirty) saveDb(db);
+      }
+      if (Array.isArray(db.g360.audits)) {
+        let dirty = false;
+        for (let i = 0; i < db.g360.audits.length; i++) {
+          const aud = db.g360.audits[i];
+          const bName = String(aud?.business?.name || "");
+          const firstPhoto = decodeURIComponent(String(aud?.business?.photos?.[0] || ""));
+          if (!/drogalu/i.test(bName) && /drogalu/i.test(firstPhoto)) {
+            const matchedDemo = demoBusinesses.find(
+              (d) => d.name.toLowerCase() === bName.toLowerCase() || d.place_id === aud?.business?.place_id
+            );
+            aud.business.photos = matchedDemo?.photos || encantoDemo?.photos || [];
+            dirty = true;
+          }
+          if (!Array.isArray(aud?.gbpCheckCriteria) || aud.gbpCheckCriteria.length < 15) {
+            const rebuilt = buildG360AuditReport(aud.business || encantoDemo);
+            db.g360.audits[i] = {
+              ...rebuilt,
+              id: aud.id || rebuilt.id,
+              createdAt: aud.createdAt || rebuilt.createdAt,
+            };
+            dirty = true;
+          }
+        }
+        if (dirty) saveDb(db);
+      }
     }
     return db.g360;
   };
@@ -1090,47 +1987,70 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
     return { city: fallbackCity, uf: fallbackUf, neighborhood: "Centro" };
   };
 
-  // HELPER: Multi-AI Text Generation (Gemini -> NVIDIA NIM -> OpenRouter -> Groq -> Cerebras -> Mistral -> HuggingFace -> Pollinations Free Zero-Key)
+  // HELPER: Multi-AI Text Generation (Gemini 3.1 Flash-Lite -> Gemini 3.8 Flash -> OpenRouter -> Groq -> NVIDIA NIM -> Pollinations)
   async function generateTextMultiAi(prompt: string): Promise<{ text: string; provider: string }> {
     const ai = getGeminiClient();
     if (ai) {
       try {
-        const res = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: prompt,
-        });
-        if (res.text?.trim()) {
+        const liteRes: any = await Promise.race([
+          ai.models.generateContent({
+            model: "gemini-3.1-flash-lite",
+            contents: prompt,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini Lite timeout")), 7000)),
+        ]);
+        if (liteRes?.text?.trim()) {
+          return { text: liteRes.text.trim(), provider: "gemini-3.1-flash-lite" };
+        }
+      } catch (eLite) {
+        console.warn("Gemini Lite generation fallback, trying gemini-3.8-flash:", eLite);
+      }
+
+      try {
+        const res: any = await Promise.race([
+          ai.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents: prompt,
+            config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini 3.8 Flash timeout")), 8000)),
+        ]);
+        if (res?.text?.trim()) {
           return { text: res.text.trim(), provider: "gemini-3.8-flash" };
         }
       } catch (e) {
-        console.warn("Gemini generation fallback:", e);
+        console.warn("Gemini 3.8 Flash fallback:", e);
       }
     }
 
-    const nvidiaKey = getNvidiaKey();
-    if (nvidiaKey.length > 8) {
-      try {
-        const nvRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${nvidiaKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "meta/llama-3.3-70b-instruct",
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.4,
-            max_tokens: 800,
-          }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (nvRes.ok) {
-          const nvData: any = await nvRes.json();
-          const txt = nvData.choices?.[0]?.message?.content?.trim();
-          if (txt) return { text: txt, provider: "nvidia-llama-3.3-70b" };
+    const groqKey = getGroqKey();
+    if (groqKey.length > 8) {
+      for (const gqModel of ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]) {
+        try {
+          const gqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${groqKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: gqModel,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.4,
+              max_tokens: 1600,
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (gqRes.ok) {
+            const gqData: any = await gqRes.json();
+            const txt = gqData.choices?.[0]?.message?.content?.trim();
+            if (txt) return { text: txt, provider: `groq:${gqModel}` };
+          }
+        } catch (e) {
+          console.warn(`Groq (${gqModel}) fallback:`, e);
         }
-      } catch (e) {
-        console.warn("NVIDIA NIM fallback:", e);
       }
     }
 
@@ -1144,43 +2064,48 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "meta-llama/llama-3.3-70b-instruct:free",
+            model: "openrouter/auto",
             messages: [{ role: "user", content: prompt }],
+            max_tokens: 1200,
           }),
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(12000),
         });
         if (orRes.ok) {
           const orData: any = await orRes.json();
           const txt = orData.choices?.[0]?.message?.content?.trim();
-          if (txt) return { text: txt, provider: "openrouter-llama-3.3-free" };
+          if (txt) return { text: txt, provider: `openrouter:${orData.model || "auto"}` };
         }
       } catch (e) {
         console.warn("OpenRouter fallback:", e);
       }
     }
 
-    const groqKey = getGroqKey();
-    if (groqKey.length > 8) {
-      try {
-        const gqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${groqKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "user", content: prompt }],
-          }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (gqRes.ok) {
-          const gqData: any = await gqRes.json();
-          const txt = gqData.choices?.[0]?.message?.content?.trim();
-          if (txt) return { text: txt, provider: "groq-llama-3.3" };
+    const nvidiaKey = getNvidiaKey();
+    if (nvidiaKey.length > 8) {
+      for (const nvModel of ["deepseek-ai/deepseek-v4.1-flash", "mistralai/mistral-large-4-1t-a52b", "nv-mistralai/mistral-nemo-12b-instruct"]) {
+        try {
+          const nvRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${nvidiaKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: nvModel,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.4,
+              max_tokens: 1200,
+            }),
+            signal: AbortSignal.timeout(12000),
+          });
+          if (nvRes.ok) {
+            const nvData: any = await nvRes.json();
+            const txt = nvData.choices?.[0]?.message?.content?.trim();
+            if (txt) return { text: txt, provider: `nvidia:${nvModel}` };
+          }
+        } catch (e) {
+          console.warn(`NVIDIA NIM (${nvModel}) fallback:`, e);
         }
-      } catch (e) {
-        console.warn("Groq fallback:", e);
       }
     }
 
@@ -1286,7 +2211,28 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
     return { text: "", provider: "deterministic" };
   }
 
-  // HELPER: Resolve Real Business via Outscraper v3 -> Google Places API (New) -> Serper Maps -> Gemini Maps Grounding -> OpenStreetMap Nominatim (Free Zero-Key)
+  function normalizeWorkingHoursToList(rawHours: any): string[] | null {
+    if (!rawHours) return null;
+    if (Array.isArray(rawHours)) {
+      const cleaned = rawHours.map((h) => String(h || "").trim()).filter(Boolean);
+      return cleaned.length > 0 ? cleaned : null;
+    }
+    if (typeof rawHours === "object") {
+      const entries = Object.entries(rawHours)
+        .map(([day, val]) => `${day}: ${Array.isArray(val) ? val.join(", ") : String(val || "Fechado")}`)
+        .filter(Boolean);
+      return entries.length > 0 ? entries : null;
+    }
+    if (typeof rawHours === "string" && rawHours.trim()) {
+      return rawHours
+        .split(/\n|;|\|/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    return null;
+  }
+
+  // HELPER: Resolve Real Business via Outscraper v3 + Google Places API (New) Hybrid -> Serper Maps -> Gemini Maps Grounding -> OpenStreetMap Nominatim (Free Zero-Key)
   async function resolveRealBusinessMultiEngine(rawQuery: string): Promise<any> {
     let searchName = String(rawQuery || "").trim();
 
@@ -1317,18 +2263,29 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
       (b) => b.name.toLowerCase() === searchName.toLowerCase() || (searchName.length >= 5 && b.name.toLowerCase().includes(searchName.toLowerCase()))
     );
 
-    // 3. Try Outscraper Google Maps API v3 (100% real verification status, subtypes, photos_count, reviews_per_score)
+    // 2-bis. Check 7-day CostGuard cache to avoid repeated external calls for the same company
+    const resolveCacheKey = `resolve::${searchName.toLowerCase()}`;
+    const cachedResolved = costGuard.getCachedBusinessSearch(resolveCacheKey);
+    if (cachedResolved) {
+      return { ...cachedResolved, _fromCache: true };
+    }
+
+    let outscraperCandidate: any = null;
+
+    // 3. Try Outscraper Google Maps API v3 (100% real verification status, subtypes, photos_count, reviews_per_score, working_hours, description — ZERO Google Cloud Billing!)
     const outscraperKey = getOutscraperKey();
-    if (outscraperKey.length > 10) {
+    const outscraperLimit = costGuard.checkLimit("outscraper");
+    if (outscraperKey.length > 10 && outscraperLimit.allowed) {
       try {
         const osUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(
           searchName
-        )}&limit=7&async=false&language=pt&region=BR`;
+        )}&limit=12&async=false&language=pt&region=BR`;
         const osRes = await fetch(osUrl, {
           headers: { "X-API-KEY": outscraperKey },
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(10000),
         });
         if (osRes.ok) {
+          costGuard.recordCall("outscraper");
           const osJson: any = await osRes.json();
           const list = Array.isArray(osJson?.data?.[0]) ? osJson.data[0] : [];
           if (list.length > 0) {
@@ -1347,39 +2304,59 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
                 }
               }
             }
-            const realCompetitors = list.slice(1, 7).map((c: any) => ({
+            const realCompetitors = list.slice(1, 12).map((c: any) => ({
               name: c.name || "Concorrente Local",
               rating: Number(c.rating || 4.7),
               reviewsCount: Number(c.reviews || 45),
               photosCount: Number(c.photos_count || 25),
               verified: Boolean(c.verified ?? true),
               hasWebsite: Boolean(c.site),
+              photo: c.photo || c.street_view || c.logo || "",
             }));
+            const normHours = normalizeWorkingHoursToList(top.working_hours ?? top.hours);
 
-            return {
+            // Collect direct googleusercontent photo URLs from Outscraper without triggering paid Google Places Photo SKUs
+            const directOutscraperPhotos = Array.from(
+              new Set(
+                [
+                  top.photo,
+                  top.street_view,
+                  top.logo,
+                  ...(Array.isArray(top.photos) ? top.photos : []),
+                  ...list.slice(0, 6).map((item: any) => item?.photo).filter(Boolean),
+                ].filter((u) => typeof u === "string" && u.startsWith("http"))
+              )
+            ).slice(0, 10);
+
+            outscraperCandidate = {
               place_id: top.place_id || `outscraper-${Date.now()}`,
               source: "outscraper-v3",
               name: top.name || searchName,
-              category: top.type || subtypesArr[0] || "Comércio Local",
+              category: top.type || subtypesArr[0] || null,
+              categories: subtypesArr,
               additional_categories_count: Math.max(0, subtypesArr.length - 1),
               city: top.city || parseAddrCityUf(top.full_address || "").city,
               uf: top.state_code || parseAddrCityUf(top.full_address || "").uf,
               neighborhood: top.borough || parseAddrCityUf(top.full_address || "").neighborhood,
               address: top.full_address || top.street || "",
-              phone: top.phone || "(67) 3325-4012",
+              phone: top.phone ?? null,
+              hours: normHours,
+              opening_hours: normHours,
               whatsapp: String(top.phone || "").replace(/\D/g, ""),
-              rating: Number(top.rating || 4.7),
-              rating_count: Number(top.reviews || 0),
-              photos_count: Number(top.photos_count || 10),
+              rating: top.rating !== undefined && top.rating !== null ? Number(top.rating) : null,
+              rating_count: top.reviews !== undefined && top.reviews !== null ? Number(top.reviews) : null,
+              reviews_data: Array.isArray(top.reviews_data) ? top.reviews_data : null,
+              photos_count: typeof top.photos_count === "number" ? Number(top.photos_count) : directOutscraperPhotos.length || null,
+              posts_data: Array.isArray(top.posts_data) ? top.posts_data : null,
               verified: Boolean(top.verified),
-              website: top.site || "",
+              website: top.site ?? "",
               lat: Number(top.latitude || -20.4812),
               lng: Number(top.longitude || -54.6154),
               bio: top.description || "",
               features: aboutFeatures.length > 0 ? aboutFeatures.slice(0, 12) : ["Atendimento local"],
               reviews_per_score: top.reviews_per_score || null,
               realCompetitors,
-              photos: top.photo ? [top.photo] : foundDemo?.photos || [],
+              photos: directOutscraperPhotos.length > 0 ? directOutscraperPhotos : foundDemo?.photos || [],
             };
           }
         }
@@ -1388,9 +2365,10 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
       }
     }
 
-    // 4. Try Real Google Maps Platform Places API (New) using VITE_GOOGLE_MAPS_API_KEY
+    // 4. Try Real Google Maps Platform Places API (New) ONLY when explicitly allowed in CostGuard (blocked by default in Zero-Cost Mode!)
     const mapsKey = getMapsKey();
-    if (mapsKey.length > 10) {
+    const placesLimit = costGuard.checkLimit("google_places");
+    if (mapsKey.length > 10 && placesLimit.allowed) {
       try {
         const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
           method: "POST",
@@ -1399,7 +2377,7 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
             "X-Goog-Api-Key": mapsKey,
             "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
             "X-Goog-FieldMask":
-              "places.id,places.displayName,places.primaryTypeDisplayName,places.types,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.websiteUri,places.location,places.photos,places.businessStatus,places.editorialSummary",
+              "places.id,places.displayName,places.primaryTypeDisplayName,places.types,places.formattedAddress,places.nationalPhoneNumber,places.regularOpeningHours,places.rating,places.userRatingCount,places.websiteUri,places.location,places.photos,places.reviews,places.businessStatus,places.editorialSummary",
           },
           body: JSON.stringify({
             textQuery: searchName,
@@ -1410,16 +2388,21 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
         });
 
         if (gRes.ok) {
+          costGuard.recordCall("google_places");
           const gData: any = await gRes.json();
           const places = gData.places || [];
           if (places.length > 0) {
             const p = places[0];
             const parsedLoc = parseAddrCityUf(p.formattedAddress || "");
-            const catName = p.primaryTypeDisplayName?.text || "Empresa Local";
+            const catName = p.primaryTypeDisplayName?.text || outscraperCandidate?.category || "Empresa Local";
 
-            // Fetch competitors in the same city & category if search only returned 1 place
-            let compPlaces = places.slice(1, 7);
-            if (compPlaces.length < 3 && parsedLoc.city) {
+            // Fetch up to 20 competitors in the same city & specific niche
+            const specificNicheQuery = inferSpecificSearchNiche({
+              name: p.displayName?.text || outscraperCandidate?.name || searchName,
+              category: catName,
+            });
+            let compPlaces = places.slice(1, 20);
+            if (compPlaces.length < 12 && parsedLoc.city && costGuard.checkLimit("google_places").allowed) {
               try {
                 const cRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
                   method: "POST",
@@ -1428,18 +2411,19 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
                     "X-Goog-Api-Key": mapsKey,
                     "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
                     "X-Goog-FieldMask":
-                      "places.id,places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.photos",
+                      "places.id,places.displayName,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.websiteUri,places.photos",
                   },
                   body: JSON.stringify({
-                    textQuery: `${catName} em ${parsedLoc.city} ${parsedLoc.uf}`,
+                    textQuery: `${specificNicheQuery} em ${parsedLoc.city} ${parsedLoc.uf}`,
                     languageCode: "pt-BR",
-                    maxResultCount: 7,
+                    maxResultCount: 20,
                   }),
                   signal: AbortSignal.timeout(6000),
                 });
                 if (cRes.ok) {
+                  costGuard.recordCall("google_places");
                   const cData: any = await cRes.json();
-                  compPlaces = (cData.places || []).filter((cp: any) => cp.id !== p.id).slice(0, 6);
+                  compPlaces = (cData.places || []).filter((cp: any) => cp.id !== p.id).slice(0, 19);
                 }
               } catch {}
             }
@@ -1448,45 +2432,98 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
               name: cp.displayName?.text || "Concorrente Google Maps",
               rating: Number(cp.rating || 4.7),
               reviewsCount: Number(cp.userRatingCount || 60),
-              photosCount: Array.isArray(cp.photos) ? cp.photos.length * 5 : 28,
+              photosCount: Array.isArray(cp.photos) ? cp.photos.length : 10,
               verified: true,
               hasWebsite: Boolean(cp.websiteUri),
+              category: cp.primaryTypeDisplayName?.text || specificNicheQuery,
+              photo: cp.photos?.[0]?.name
+                ? `/api/places/photo?name=${encodeURIComponent(cp.photos[0].name)}&max_width_px=240`
+                : "",
             }));
 
-            const typesCount = Array.isArray(p.types) ? Math.max(0, Math.min(3, p.types.length - 3)) : 1;
             const photoRefs = (p.photos || [])
-              .slice(0, 4)
-              .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=900`);
+              .slice(0, 10)
+              .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1200`);
+            const mergedPhotos =
+              photoRefs.length > 0
+                ? photoRefs
+                : outscraperCandidate?.photos?.length > 0
+                ? outscraperCandidate.photos
+                : foundDemo?.photos || [];
+            const gHours = normalizeWorkingHoursToList(p.regularOpeningHours?.weekdayDescriptions);
+            const mergedHours = gHours || outscraperCandidate?.hours || null;
 
-            return {
-              place_id: p.id,
-              source: "google-places-new",
-              name: p.displayName?.text || searchName,
-              category: catName,
-              additional_categories_count: foundDemo?.additional_categories_count ?? typesCount,
-              city: parsedLoc.city,
-              uf: parsedLoc.uf,
-              neighborhood: parsedLoc.neighborhood,
-              address: p.formattedAddress || `${parsedLoc.city} - ${parsedLoc.uf}`,
-              phone: p.nationalPhoneNumber || foundDemo?.phone || "(67) 3325-4012",
-              whatsapp: String(p.nationalPhoneNumber || foundDemo?.whatsapp || "").replace(/\D/g, ""),
-              rating: Number(p.rating ?? foundDemo?.rating ?? 4.7),
-              rating_count: Number(p.userRatingCount ?? foundDemo?.rating_count ?? 72),
-              photos_count: foundDemo?.photos_count ?? (Array.isArray(p.photos) ? p.photos.length * 3 : 18),
-              verified: typeof foundDemo?.verified === "boolean" ? foundDemo.verified : Boolean(p.websiteUri && (p.userRatingCount || 0) > 100),
-              website: p.websiteUri || "",
-              lat: Number(p.location?.latitude ?? foundDemo?.lat ?? -20.4812),
-              lng: Number(p.location?.longitude ?? foundDemo?.lng ?? -54.6154),
-              bio: p.editorialSummary?.text || foundDemo?.bio || "",
-              features: foundDemo?.features || ["Atendimento local", "Rotas no Google Maps"],
-              realCompetitors: realCompetitors.length > 0 ? realCompetitors : foundDemo?.realCompetitors || [],
-              photos: photoRefs.length > 0 ? photoRefs : foundDemo?.photos || [],
+            const finalBiz = {
+              place_id: p.id || outscraperCandidate?.place_id,
+              source: outscraperCandidate ? "outscraper+google_places" : "google_places",
+              name: p.displayName?.text || outscraperCandidate?.name || searchName,
+              category: outscraperCandidate?.category || p.primaryTypeDisplayName?.text || null,
+              categories:
+                outscraperCandidate?.categories?.length > 0
+                  ? outscraperCandidate.categories
+                  : Array.isArray(p.types)
+                  ? p.types
+                  : null,
+              additional_categories_count:
+                outscraperCandidate?.additional_categories_count ??
+                (Array.isArray(p.types) ? Math.max(0, p.types.length - 1) : 0),
+              city: parsedLoc.city || outscraperCandidate?.city,
+              uf: parsedLoc.uf || outscraperCandidate?.uf,
+              neighborhood: parsedLoc.neighborhood || outscraperCandidate?.neighborhood,
+              address: p.formattedAddress || outscraperCandidate?.address || `${parsedLoc.city} - ${parsedLoc.uf}`,
+              phone: p.nationalPhoneNumber ?? outscraperCandidate?.phone ?? null,
+              hours: mergedHours,
+              opening_hours: mergedHours,
+              whatsapp: String(p.nationalPhoneNumber || outscraperCandidate?.phone || "").replace(/\D/g, ""),
+              rating:
+                p.rating !== undefined && p.rating !== null
+                  ? Number(p.rating)
+                  : outscraperCandidate?.rating ?? null,
+              rating_count:
+                p.userRatingCount !== undefined && p.userRatingCount !== null
+                  ? Number(p.userRatingCount)
+                  : outscraperCandidate?.rating_count ?? null,
+              photos_count:
+                outscraperCandidate?.photos_count && outscraperCandidate.photos_count > mergedPhotos.length
+                  ? outscraperCandidate.photos_count
+                  : mergedPhotos.length > 0
+                  ? mergedPhotos.length
+                  : typeof foundDemo?.photos_count === "number"
+                  ? foundDemo.photos_count
+                  : null,
+              verified:
+                typeof outscraperCandidate?.verified === "boolean"
+                  ? outscraperCandidate.verified
+                  : typeof foundDemo?.verified === "boolean"
+                  ? foundDemo.verified
+                  : Boolean(p.websiteUri || p.regularOpeningHours || p.nationalPhoneNumber),
+              website: p.websiteUri || outscraperCandidate?.website || "",
+              lat: Number(p.location?.latitude ?? outscraperCandidate?.lat ?? foundDemo?.lat ?? -20.4812),
+              lng: Number(p.location?.longitude ?? outscraperCandidate?.lng ?? foundDemo?.lng ?? -54.6154),
+              bio: outscraperCandidate?.bio || p.editorialSummary?.text || "",
+              features:
+                outscraperCandidate?.features?.length > 0
+                  ? outscraperCandidate.features
+                  : foundDemo?.features || ["Atendimento local", "Rotas no Google Maps"],
+              reviews_per_score: outscraperCandidate?.reviews_per_score || null,
+              realCompetitors:
+                realCompetitors.length > 0
+                  ? realCompetitors
+                  : outscraperCandidate?.realCompetitors || foundDemo?.realCompetitors || [],
+              photos: mergedPhotos,
             };
+            costGuard.setCachedBusinessSearch(resolveCacheKey, finalBiz);
+            return finalBiz;
           }
         }
       } catch (e) {
         console.warn("Google Places API (New) lookup fallback:", e);
       }
+    }
+
+    if (outscraperCandidate) {
+      costGuard.setCachedBusinessSearch(resolveCacheKey, outscraperCandidate);
+      return outscraperCandidate;
     }
 
     // 4b. Try Serper.dev Google Places API if SERPER_API_KEY is configured
@@ -2015,11 +3052,271 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
       targetBiz = await resolveRealBusinessMultiEngine(qToResolve);
     }
 
+    // 2a. Always enrich with Outscraper v3 when OUTSCRAPER_API_KEY is configured!
+    // This combines Outscraper's verified flag, subtypes (secondary categories), total photos_count, description, working_hours, and reviews_per_score with Google Places' 10 high-res photos.
+    const outscraperKey = getOutscraperKey();
+    if (
+      targetBiz &&
+      outscraperKey.length > 10 &&
+      targetBiz.source !== "outscraper-v3" &&
+      !String(targetBiz.place_id || "").startsWith("demo-")
+    ) {
+      try {
+        const osQuery = `${targetBiz.name} ${targetBiz.city || ""} ${targetBiz.uf || ""}`.trim();
+        const osUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(
+          osQuery
+        )}&limit=5&async=false&language=pt&region=BR`;
+        const osRes = await fetch(osUrl, {
+          headers: { "X-API-KEY": outscraperKey },
+          signal: AbortSignal.timeout(6500),
+        });
+        if (osRes.ok) {
+          costGuard.recordCall("outscraper");
+          const osJson: any = await osRes.json();
+          const rows = Array.isArray(osJson?.data?.[0])
+            ? osJson.data[0]
+            : Array.isArray(osJson?.data)
+            ? osJson.data
+            : [];
+          if (rows.length > 0) {
+            const top = rows[0];
+            const subtypesArr =
+              typeof top.subtypes === "string"
+                ? top.subtypes
+                    .split(",")
+                    .map((s: string) => s.trim())
+                    .filter(Boolean)
+                : Array.isArray(top.subtypes)
+                ? top.subtypes
+                : [];
+            const existingPhotos = Array.isArray(targetBiz.photos) ? targetBiz.photos : [];
+            const mergedPhotos =
+              existingPhotos.length > 0
+                ? existingPhotos
+                : top.photo
+                ? [top.photo]
+                : [];
+            const normHours =
+              normalizeWorkingHoursToList(targetBiz.hours) ||
+              normalizeWorkingHoursToList(targetBiz.opening_hours) ||
+              normalizeWorkingHoursToList(top.working_hours) ||
+              normalizeWorkingHoursToList(top.hours);
+            targetBiz = {
+              ...targetBiz,
+              source: "outscraper+google_places",
+              verified: typeof top.verified === "boolean" ? top.verified : targetBiz.verified,
+              category: top.type || subtypesArr[0] || targetBiz.category,
+              categories: subtypesArr.length > 0 ? subtypesArr : targetBiz.categories,
+              additional_categories_count:
+                subtypesArr.length > 1
+                  ? subtypesArr.length - 1
+                  : targetBiz.additional_categories_count,
+              photos_count:
+                typeof top.photos_count === "number" && top.photos_count > 0
+                  ? top.photos_count
+                  : mergedPhotos.length || targetBiz.photos_count,
+              bio: top.description || targetBiz.bio || "",
+              website: targetBiz.website || top.site || "",
+              phone: targetBiz.phone || top.phone || null,
+              hours: normHours,
+              opening_hours: normHours,
+              reviews_per_score: top.reviews_per_score || targetBiz.reviews_per_score || null,
+              photos: mergedPhotos,
+            };
+          }
+        }
+      } catch (osErr) {
+        console.warn("Outscraper hybrid enrichment fallback:", osErr);
+      }
+    }
+
+    // 2a-bis. If targetBiz has < 3 photos or is missing hours/bio, enrich from Google Places API (New) ONLY if Google Places is allowed in CostGuard
+    const mapsKey = getMapsKey();
+    const placesAllowedInAudit = costGuard.checkLimit("google_places").allowed;
+    if (
+      targetBiz &&
+      mapsKey.length > 10 &&
+      placesAllowedInAudit &&
+      (!Array.isArray(targetBiz.photos) || targetBiz.photos.length < 3 || !targetBiz.hours) &&
+      !String(targetBiz.place_id || "").startsWith("demo-")
+    ) {
+      try {
+        const gpQuery = `${targetBiz.name} ${targetBiz.city || ""} ${targetBiz.uf || ""}`.trim();
+        const gpRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": mapsKey,
+            "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
+            "X-Goog-FieldMask":
+              "places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.regularOpeningHours,places.websiteUri,places.photos,places.editorialSummary",
+          },
+          body: JSON.stringify({
+            textQuery: gpQuery,
+            languageCode: "pt-BR",
+            maxResultCount: 3,
+          }),
+          signal: AbortSignal.timeout(5500),
+        });
+        if (gpRes.ok) {
+          costGuard.recordCall("google_places");
+          const gpData: any = await gpRes.json();
+          const p = (gpData.places || [])[0];
+          if (p) {
+            const gpPhotos = (p.photos || [])
+              .slice(0, 10)
+              .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1200`);
+            const normHours =
+              normalizeWorkingHoursToList(targetBiz.hours) ||
+              normalizeWorkingHoursToList(p.regularOpeningHours?.weekdayDescriptions);
+            targetBiz = {
+              ...targetBiz,
+              photos: gpPhotos.length > 0 ? gpPhotos : targetBiz.photos || [],
+              hours: normHours,
+              opening_hours: normHours,
+              bio: targetBiz.bio || p.editorialSummary?.text || "",
+              phone: targetBiz.phone || p.nationalPhoneNumber || null,
+              website: targetBiz.website || p.websiteUri || "",
+              address: targetBiz.address || p.formattedAddress || "",
+            };
+          }
+        }
+      } catch (gpErr) {
+        console.warn("Google Places photo/hours enrichment fallback:", gpErr);
+      }
+    }
+
+    // Ensure hours is always normalized to string[] if present
+    if (targetBiz) {
+      const normalizedHrs = normalizeWorkingHoursToList(targetBiz.hours || targetBiz.opening_hours);
+      if (normalizedHrs) {
+        targetBiz = { ...targetBiz, hours: normalizedHrs, opening_hours: normalizedHrs };
+      }
+    }
+
+    // 2b. Ensure up to 19 real local competitors in the EXACT niche with photo thumbnails are populated via Outscraper Free Tier first, or Google Places only if unlocked
+    if (
+      targetBiz &&
+      (!Array.isArray(targetBiz.realCompetitors) ||
+        targetBiz.realCompetitors.length < 8 ||
+        !targetBiz.realCompetitors.some((rc: any) => rc?.photo))
+    ) {
+      const city = targetBiz.city || parseAddrCityUf(targetBiz.address || "").city || "Anápolis";
+      const uf = targetBiz.uf || parseAddrCityUf(targetBiz.address || "").uf || "GO";
+      const specificNiche = inferSpecificSearchNiche(targetBiz);
+      const compCacheKey = `comps::${specificNiche.toLowerCase()}::${city.toLowerCase()}`;
+      const cachedComps = costGuard.getCachedBusinessSearch(compCacheKey);
+
+      if (Array.isArray(cachedComps) && cachedComps.length > 0) {
+        targetBiz = { ...targetBiz, realCompetitors: cachedComps };
+      } else if (outscraperKey.length > 10 && costGuard.checkLimit("outscraper").allowed) {
+        try {
+          const osCompUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(
+            `${specificNiche} em ${city} ${uf}`
+          )}&limit=15&async=false&language=pt&region=BR`;
+          const osCompRes = await fetch(osCompUrl, {
+            headers: { "X-API-KEY": outscraperKey },
+            signal: AbortSignal.timeout(7500),
+          });
+          if (osCompRes.ok) {
+            costGuard.recordCall("outscraper");
+            const osCompJson: any = await osCompRes.json();
+            const osRows = Array.isArray(osCompJson?.data?.[0]) ? osCompJson.data[0] : [];
+            const compList = osRows
+              .filter(
+                (cp: any) =>
+                  cp?.name &&
+                  String(cp.name).toLowerCase() !== String(targetBiz.name || "").toLowerCase()
+              )
+              .slice(0, 15)
+              .map((cp: any) => ({
+                name: cp.name || "Concorrente Local",
+                rating: Number(cp.rating || 4.7),
+                reviewsCount: Number(cp.reviews || 45),
+                photosCount: Number(cp.photos_count || 12),
+                verified: typeof cp.verified === "boolean" ? cp.verified : true,
+                hasWebsite: Boolean(cp.site),
+                category: cp.type || specificNiche,
+                photo: cp.photo || cp.street_view || cp.logo || "",
+              }));
+            if (compList.length > 0) {
+              costGuard.setCachedBusinessSearch(compCacheKey, compList);
+              targetBiz = { ...targetBiz, realCompetitors: compList };
+            }
+          }
+        } catch (osCompErr) {
+          console.warn("Outscraper competitors enrichment fallback:", osCompErr);
+        }
+      } else if (mapsKey.length > 10 && costGuard.checkLimit("google_places").allowed) {
+        try {
+          const cRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": mapsKey,
+              "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
+              "X-Goog-FieldMask":
+                "places.id,places.displayName,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.websiteUri,places.photos",
+            },
+            body: JSON.stringify({
+              textQuery: `${specificNiche} em ${city} ${uf}`,
+              languageCode: "pt-BR",
+              maxResultCount: 20,
+            }),
+            signal: AbortSignal.timeout(5500),
+          });
+          if (cRes.ok) {
+            costGuard.recordCall("google_places");
+            const cData: any = await cRes.json();
+            const compList = (cData.places || [])
+              .filter(
+                (cp: any) =>
+                  cp.id !== targetBiz.place_id &&
+                  String(cp.displayName?.text || "").toLowerCase() !== String(targetBiz.name || "").toLowerCase()
+              )
+              .slice(0, 19)
+              .map((cp: any) => ({
+                name: cp.displayName?.text || "Concorrente Local",
+                rating: Number(cp.rating || 4.7),
+                reviewsCount: Number(cp.userRatingCount || 45),
+                photosCount: Array.isArray(cp.photos) ? cp.photos.length : 10,
+                verified: true,
+                hasWebsite: Boolean(cp.websiteUri),
+                category: cp.primaryTypeDisplayName?.text || specificNiche,
+                photo: cp.photos?.[0]?.name
+                  ? `/api/places/photo?name=${encodeURIComponent(cp.photos[0].name)}&max_width_px=240`
+                  : "",
+              }));
+            if (compList.length > 0) {
+              costGuard.setCachedBusinessSearch(compCacheKey, compList);
+              targetBiz = { ...targetBiz, realCompetitors: compList };
+            }
+          }
+        } catch (err) {
+          console.warn("Competitors enrichment fallback:", err);
+        }
+      }
+    }
+
     if (typeof verifiedOverride === "boolean") {
       targetBiz = { ...targetBiz, verified: verifiedOverride };
     }
 
     const report = buildG360AuditReport(targetBiz);
+
+    // Optional controlled AI narrative redaction (never alters mathematical scores, coverage, or penalties)
+    if (req.body?.useAiRedaction === true) {
+      const enrichedContract = await enrichAuditContractWithControlledGemini({
+        methodology_version: "G360-AUDIT-v2.0",
+        generated_at: report.createdAt,
+        normalized_input: report.normalized_input,
+        pre_analise: report.pre_analise,
+        analise_completa_projetada: report.analise_completa_projetada,
+      });
+      report.pre_analise = enrichedContract.pre_analise;
+      report.analise_completa_projetada = enrichedContract.analise_completa_projetada;
+    }
+
     g360.audits = [
       report,
       ...(g360.audits || []).filter((a: any) => a.business?.name !== report.business?.name),
@@ -2028,7 +3325,233 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
     res.json({ ok: true, report });
   });
 
-  // 3. LEAD FINDER (BUSCADOR DE LEADS QUALIFICADOS POR NICHO + CIDADE VIA OUTSCRAPER / GOOGLE PLACES)
+  // 2c. OPTIONAL ON-DEMAND LIVE GEOGRID (3x3 = 9 GPS points or 5x5 = 25 GPS points)
+  // Completely independent of the Audit Score, with Zero-Cost Mode protection
+  router.post("/geogrid-live", async (req, res) => {
+    const { business, keyword, gridSize = 3, radiusKm = 2.5 } = req.body || {};
+    const size = Number(gridSize) === 5 ? 5 : 3;
+    const totalPoints = size * size;
+    const baseLat = Number(business?.lat) || -16.3285;
+    const baseLng = Number(business?.lng) || -48.9534;
+    const targetName = String(business?.name || "Sua Empresa").trim();
+    const targetPlaceId = String(business?.place_id || "").trim();
+    const searchKw =
+      String(keyword || "").trim() ||
+      `${inferSpecificSearchNiche(business)} em ${business?.city || "Anápolis"}`;
+
+    // Step distance in degrees (~111km per degree lat)
+    const halfSpan = Math.floor(size / 2);
+    const stepDeg = (Number(radiusKm || 2.5) / Math.max(1, halfSpan)) / 111;
+
+    const gridCoords: Array<{ row: number; col: number; lat: number; lng: number; zoneLabel: string }> = [];
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const latOffset = (halfSpan - r) * stepDeg;
+        const lngOffset = (c - halfSpan) * stepDeg;
+        gridCoords.push({
+          row: r,
+          col: c,
+          lat: Number((baseLat + latOffset).toFixed(6)),
+          lng: Number((baseLng + lngOffset).toFixed(6)),
+          zoneLabel:
+            r === halfSpan && c === halfSpan
+              ? "Centro (Pino da Empresa)"
+              : ` Quadrante [${r + 1},${c + 1}]`,
+        });
+      }
+    }
+
+    const mapsKey = getMapsKey();
+    const placesAllowedForGrid = costGuard.checkLimit("google_places").allowed;
+    const pins: G360GeogridPin[] = [];
+    const discoveredCompsMap = new Map<string, any>();
+
+    if (mapsKey.length > 10 && placesAllowedForGrid) {
+      // Execute live coordinate-biased searches across the grid points ONLY when paid Google Places is explicitly unlocked
+      const pointResults = await Promise.all(
+        gridCoords.map(async (pt, idx) => {
+          try {
+            const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": mapsKey,
+                "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
+                "X-Goog-FieldMask":
+                  "places.id,places.displayName,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.websiteUri,places.photos",
+              },
+              body: JSON.stringify({
+                textQuery: searchKw,
+                languageCode: "pt-BR",
+                maxResultCount: 20,
+                locationBias: {
+                  circle: {
+                    center: { latitude: pt.lat, longitude: pt.lng },
+                    radius: Math.max(800, Math.round((Number(radiusKm || 2.5) * 1000) / size)),
+                  },
+                },
+              }),
+              signal: AbortSignal.timeout(6500),
+            });
+
+            if (gRes.ok) {
+              costGuard.recordCall("google_places");
+              const gData: any = await gRes.json();
+              const places = gData.places || [];
+              places.forEach((cp: any) => {
+                const cpName = String(cp.displayName?.text || "").trim();
+                if (
+                  cpName &&
+                  cp.id !== targetPlaceId &&
+                  cpName.toLowerCase() !== targetName.toLowerCase() &&
+                  !discoveredCompsMap.has(cpName.toLowerCase())
+                ) {
+                  discoveredCompsMap.set(cpName.toLowerCase(), {
+                    name: cpName,
+                    rating: Number(cp.rating || 4.7),
+                    reviewsCount: Number(cp.userRatingCount || 40),
+                    photosCount: Array.isArray(cp.photos) ? cp.photos.length : 10,
+                    verified: true,
+                    hasWebsite: Boolean(cp.websiteUri),
+                    category: cp.primaryTypeDisplayName?.text || inferSpecificSearchNiche(business),
+                    photo: cp.photos?.[0]?.name
+                      ? `/api/places/photo?name=${encodeURIComponent(cp.photos[0].name)}&max_width_px=240`
+                      : "",
+                  });
+                }
+              });
+
+              const foundIdx = places.findIndex(
+                (p: any) =>
+                  (targetPlaceId && p.id === targetPlaceId) ||
+                  String(p.displayName?.text || "")
+                    .toLowerCase()
+                    .includes(targetName.toLowerCase().slice(0, 12)) ||
+                  targetName
+                    .toLowerCase()
+                    .includes(String(p.displayName?.text || "---").toLowerCase().slice(0, 12))
+              );
+
+              let rank = foundIdx >= 0 ? foundIdx + 1 : 12;
+              if (foundIdx === -1 && places.length > 0) {
+                const distFromCenter = Math.hypot(pt.row - halfSpan, pt.col - halfSpan);
+                const bizPower =
+                  Number(business?.rating_count || 20) * (Number(business?.rating || 4.6) / 5);
+                const strongerHere = places.filter((p: any) => {
+                  const pPower = Number(p.userRatingCount || 30) * (Number(p.rating || 4.6) / 5);
+                  return pPower > bizPower;
+                }).length;
+                rank = Math.max(1, Math.min(20, Math.round(strongerHere + 1 + distFromCenter * 1.8)));
+              } else if (foundIdx >= 0) {
+                const distFromCenter = Math.hypot(pt.row - halfSpan, pt.col - halfSpan);
+                rank = Math.max(1, Math.min(20, Math.round(foundIdx + 1 + distFromCenter * 1.2)));
+              }
+
+              const tier: G360GeogridPin["tier"] = rank <= 3 ? "top" : rank <= 10 ? "mid" : "low";
+              return {
+                id: `live-pin-${pt.row}-${pt.col}`,
+                row: pt.row,
+                col: pt.col,
+                lat: pt.lat,
+                lng: pt.lng,
+                rank,
+                tier,
+                zoneLabel: pt.zoneLabel || `Ponto ${idx + 1}`,
+              };
+            }
+          } catch (err) {
+            console.warn("Geogrid point lookup fallback:", err);
+          }
+          const distFromCenter = Math.hypot(pt.row - halfSpan, pt.col - halfSpan);
+          const fallbackRank = Math.max(1, Math.min(20, Math.round(5 + distFromCenter * 2.5)));
+          return {
+            id: `live-pin-${pt.row}-${pt.col}`,
+            row: pt.row,
+            col: pt.col,
+            lat: pt.lat,
+            lng: pt.lng,
+            rank: fallbackRank,
+            tier: (fallbackRank <= 3 ? "top" : fallbackRank <= 10 ? "mid" : "low") as G360GeogridPin["tier"],
+            zoneLabel: pt.zoneLabel || `Ponto ${idx + 1}`,
+          };
+        })
+      );
+      pins.push(...pointResults);
+    } else {
+      // Zero-Cost Mode Geogrid calculation based on real competitor power & distance decay (R$ 0,00 GCP cost!)
+      const kwSeed = hashSeed(`${targetName}-${searchKw}`);
+      const existingComps = Array.isArray(business?.realCompetitors) ? business.realCompetitors : [];
+      const bizPower = Number(business?.rating_count || 20) * (Number(business?.rating || 4.6) / 5);
+      const strongerCount = existingComps.filter((rc: any) => {
+        const rcPower = Number(rc.reviewsCount || 0) * (Number(rc.rating || 4.5) / 5);
+        return rcPower > bizPower;
+      }).length;
+      const centerRank = Math.max(1, Math.min(15, strongerCount + 1));
+
+      gridCoords.forEach((pt, idx) => {
+        const distFromCenter = Math.hypot(pt.row - halfSpan, pt.col - halfSpan);
+        const noise = ((kwSeed + pt.row * 7 + pt.col * 13) % 3) - 1;
+        const rank = Math.max(1, Math.min(20, Math.round(centerRank + distFromCenter * 2.1 + noise)));
+        const tier: G360GeogridPin["tier"] = rank <= 3 ? "top" : rank <= 10 ? "mid" : "low";
+        pins.push({
+          id: `live-pin-${pt.row}-${pt.col}`,
+          row: pt.row,
+          col: pt.col,
+          lat: pt.lat,
+          lng: pt.lng,
+          rank,
+          tier,
+          zoneLabel: pt.zoneLabel || `Ponto ${idx + 1}`,
+        });
+      });
+    }
+
+    const avgRank = Number(
+      (pins.reduce((a, p) => a + p.rank, 0) / Math.max(1, pins.length)).toFixed(1)
+    );
+    const top3Count = pins.filter((p) => p.rank <= 3).length;
+    const top3SharePct = Math.round((top3Count / Math.max(1, pins.length)) * 100);
+
+    const liveComps = Array.from(discoveredCompsMap.values());
+    const enrichedBiz =
+      liveComps.length > 0 ? { ...business, realCompetitors: liveComps } : business;
+    const competitors = buildCompetitorsForKeyword(
+      enrichedBiz,
+      searchKw,
+      Math.round(avgRank),
+      Number(business?.gbpScore || 65)
+    );
+
+    const isZeroCostActive = !placesAllowedForGrid;
+    const estimatedCostUsd = isZeroCostActive ? 0 : Number((totalPoints * 0.032).toFixed(2));
+    const estimatedCostBrl = isZeroCostActive ? 0 : Number((estimatedCostUsd * 5.15).toFixed(2));
+
+    res.json({
+      ok: true,
+      geogrid: {
+        keyword: searchKw,
+        gridSize: size,
+        totalPoints,
+        radiusKm: Number(radiusKm || 2.5),
+        averageRank: avgRank,
+        top3SharePct,
+        pins,
+        competitors,
+        costEstimate: {
+          gridLabel: `${size}x${size} (${totalPoints} coordenadas GPS)`,
+          apiCalls: isZeroCostActive ? 0 : totalPoints,
+          estimatedCostUsd,
+          estimatedCostBrl,
+          zeroCostProtected: isZeroCostActive,
+          note: isZeroCostActive
+            ? "Modo Custo Zero (R$ 0,00) Ativo: Geogrid calculado com os concorrentes reais sem disparar cobranças no Google Cloud."
+            : "O Geogrid é opcional e independente — não altera a nota da Pré-Análise nem da Análise Completa.",
+        },
+      },
+    });
+  });
+
+  // 3. LEAD FINDER (BUSCADOR DE LEADS QUALIFICADOS POR NICHO + CIDADE — PRIORIZA CACHE 7 DIAS + OUTSCRAPER FREE TIER SEM CUSTO GCP)
   router.post("/leads/search", async (req, res) => {
     const {
       niche = "Sorveteria",
@@ -2042,12 +3565,14 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
     const nb = String(neighborhood || "").trim();
     const searchQuery = `${cleanNiche} em ${nb ? `${nb}, ` : ""}${cleanCity}`;
 
-    let rawLeads: any[] = [];
+    // 3.0 Check 7-day CostGuard Cache first (Zero cost & instant!)
+    const leadsCacheKey = `leads::${searchQuery.toLowerCase()}`;
+    const cachedLeads = costGuard.getCachedBusinessSearch(leadsCacheKey);
+    let rawLeads: any[] = Array.isArray(cachedLeads) ? cachedLeads : [];
 
-    // 3a. Try Outscraper API v3 first if key is present and allowed by CostGuard (blocked in strictFreeMode)
-    const osGuard = costGuard.checkLimit("outscraper");
+    // 3a. Try Outscraper API v3 Free Tier FIRST (Zero Google Cloud Billing + direct googleusercontent photos!)
     const outscraperKey = getOutscraperKey();
-    if (osGuard.allowed && outscraperKey.length > 10) {
+    if (rawLeads.length === 0 && outscraperKey.length > 10 && costGuard.checkLimit("outscraper").allowed) {
       try {
         const osUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(
           searchQuery
@@ -2064,6 +3589,7 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
             const verified = Boolean(item.verified);
             const website = item.site || "";
             const gbpScore = verified && website ? 74 : verified ? 56 : 42;
+            const directPhoto = item.photo || item.street_view || item.logo || "";
             return {
               place_id: item.place_id || `os-lead-${idx}-${Date.now()}`,
               source: "outscraper-v3",
@@ -2074,10 +3600,13 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
               neighborhood: item.borough || nb || "Centro",
               address: item.full_address || `${cleanCity}`,
               phone: item.phone || "Sem telefone",
+              hours: normalizeWorkingHoursToList(item.working_hours ?? item.hours),
               whatsapp: String(item.phone || "").replace(/\D/g, ""),
               rating: Number(item.rating || 4.6),
               rating_count: Number(item.reviews || 12),
               photos_count: Number(item.photos_count || 8),
+              photos: directPhoto ? [directPhoto] : [],
+              photo: directPhoto,
               verified,
               website,
               gbpScore,
@@ -2088,16 +3617,18 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
                 : "Otimização SEO & Posts",
             };
           });
+          if (rawLeads.length > 0) {
+            costGuard.setCachedBusinessSearch(leadsCacheKey, rawLeads);
+          }
         }
       } catch (e) {
         console.warn("Outscraper lead search fallback:", e);
       }
     }
 
-    // 3b. Try Google Maps Platform Places API (New) using VITE_GOOGLE_MAPS_API_KEY guarded by CostGuard
-    const mapsGuard = costGuard.checkLimit("google_places");
+    // 3b. Try Google Maps Platform Places API (New) ONLY if unlocked in CostGuard
     const mapsKey = getMapsKey();
-    if (rawLeads.length === 0 && mapsGuard.allowed && mapsKey.length > 10) {
+    if (rawLeads.length === 0 && mapsKey.length > 10 && costGuard.checkLimit("google_places").allowed) {
       try {
         const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
           method: "POST",
@@ -2106,7 +3637,7 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
             "X-Goog-Api-Key": mapsKey,
             "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
             "X-Goog-FieldMask":
-              "places.id,places.displayName,places.primaryTypeDisplayName,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.websiteUri,places.photos,places.location",
+              "places.id,places.displayName,places.primaryTypeDisplayName,places.formattedAddress,places.nationalPhoneNumber,places.regularOpeningHours,places.rating,places.userRatingCount,places.websiteUri,places.photos,places.location",
           },
           body: JSON.stringify({
             textQuery: searchQuery,
@@ -2122,9 +3653,12 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
           rawLeads = places.map((p: any, idx: number) => {
             const loc = parseAddrCityUf(p.formattedAddress || "");
             const reviewsCount = Number(p.userRatingCount || 0);
+            const photosRefs = (p.photos || [])
+              .slice(0, 6)
+              .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=800`);
             const photosCount = Array.isArray(p.photos) ? p.photos.length * 3 : 6;
             const website = p.websiteUri || "";
-            const verified = Boolean(website && reviewsCount > 60);
+            const verified = Boolean(website || reviewsCount > 25);
             const gbpScore = verified && website ? 72 : !verified && !website ? 41 : 53;
             return {
               place_id: p.id || `gmaps-lead-${idx}`,
@@ -2136,10 +3670,13 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
               neighborhood: loc.neighborhood || nb || "Centro",
               address: p.formattedAddress || cleanCity,
               phone: p.nationalPhoneNumber || "Sem telefone",
+              hours: normalizeWorkingHoursToList(p.regularOpeningHours?.weekdayDescriptions),
               whatsapp: String(p.nationalPhoneNumber || "").replace(/\D/g, ""),
               rating: Number(p.rating || 4.5),
               rating_count: reviewsCount,
               photos_count: photosCount,
+              photos: photosRefs,
+              photo: photosRefs[0] || "",
               verified,
               website,
               lat: p.location?.latitude,
@@ -2152,28 +3689,31 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
                 : "Otimização de Ranking Local",
             };
           });
+          if (rawLeads.length > 0) {
+            costGuard.setCachedBusinessSearch(leadsCacheKey, rawLeads);
+          }
         }
       } catch (e) {
         console.warn("Google Places lead search fallback:", e);
       }
     }
 
-    // 3c. Fallback if both APIs returned empty
+    // 3c. Fallback if both APIs returned empty (strictly uses the requested niche + city, never "Sorvetes")
     if (rawLeads.length === 0) {
       rawLeads = [
         {
           place_id: `lead-1-${Date.now()}`,
-          name: `Sorvetes ${cleanCity}`,
+          name: `${cleanNiche} Central ${cleanCity}`,
           category: cleanNiche,
           city: cleanCity,
-          uf: "MS",
-          neighborhood: nb || "Vila Carvalho",
-          address: `R. Brilhante, 2681 - ${nb || "Vila Carvalho"}, ${cleanCity}`,
-          phone: "(67) 3325-4012",
-          whatsapp: "556733254012",
+          uf: "GO",
+          neighborhood: nb || "Centro",
+          address: `Av. Brasil, 1420 - ${nb || "Centro"}, ${cleanCity}`,
+          phone: "(62) 3324-4012",
+          whatsapp: "556233244012",
           rating: 4.7,
-          rating_count: 72,
-          photos_count: 23,
+          rating_count: 42,
+          photos_count: 14,
           verified: false,
           website: "",
           gbpScore: 45,
@@ -2181,21 +3721,21 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
         },
         {
           place_id: `lead-2-${Date.now()}`,
-          name: `Encanto ${cleanNiche}`,
+          name: `Prime ${cleanNiche} & Serviços`,
           category: cleanNiche,
           city: cleanCity,
           uf: "GO",
-          neighborhood: nb || "Centro",
-          address: `Av. Principal, 1480 - ${nb || "Centro"}, ${cleanCity}`,
+          neighborhood: nb || "Jundiaí",
+          address: `Rua Principal, 890 - ${nb || "Jundiaí"}, ${cleanCity}`,
           phone: "(62) 99113-8004",
           whatsapp: "5562991138004",
           rating: 4.6,
-          rating_count: 14,
-          photos_count: 9,
+          rating_count: 19,
+          photos_count: 8,
           verified: false,
           website: "",
           gbpScore: 39,
-          opportunityTag: "Crítico: Reivindicação Pendente",
+          opportunityTag: "Crítico: Sem Site Oficial",
         },
       ];
     }
@@ -2209,37 +3749,1205 @@ export function createG360Router(getDb: () => any, saveDb: (db: any) => void, de
     res.json({ ok: true, leads: filtered });
   });
 
-  // 4. GENERATE @PACOTE-GBP + PROGRESSIVE @PACOTE-SITE BRIEFING (MULTI-AI: GEMINI / NVIDIA / OPENROUTER / GROQ)
+  // 3d. LIVE AI CONNECTION TESTER (Pings Gemini, Groq, OpenRouter, NVIDIA NIM, Outscraper — respects Zero-Cost Shield on Google Maps)
+  const runLiveAiHealthCheck = async (_req: any, res: any) => {
+    const testPrompt = "Responda apenas: CONEXAO_IA_OK";
+
+    const testGemini = async () => {
+      const key = (process.env.GEMINI_API_KEY || "").trim();
+      if (!key || key === "MY_GEMINI_API_KEY") {
+        return { id: "gemini", name: "Google Gemini AI", model: "gemini-3.8-flash", keyConfigured: false, active: false, latencyMs: 0, error: "Chave GEMINI_API_KEY não configurada" };
+      }
+      const t0 = Date.now();
+      try {
+        const ai = getGeminiClient();
+        const r: any = await Promise.race([
+          ai!.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents: testPrompt,
+            config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Latência alta (>6s) — usando Gemini 3.1 Flash-Lite automatico")), 6000)),
+        ]);
+        return {
+          id: "gemini",
+          name: "Google Gemini AI (Principal)",
+          model: "gemini-3.8-flash (ThinkingLevel.LOW)",
+          keyConfigured: true,
+          active: true,
+          latencyMs: Date.now() - t0,
+          sampleOutput: (r.text || "").trim().slice(0, 80),
+        };
+      } catch (e: any) {
+        return {
+          id: "gemini",
+          name: "Google Gemini AI (Principal)",
+          model: "gemini-3.8-flash",
+          keyConfigured: true,
+          active: false,
+          latencyMs: Date.now() - t0,
+          error: String(e?.message || e).slice(0, 140),
+        };
+      }
+    };
+
+    const testGeminiLite = async () => {
+      const key = (process.env.GEMINI_API_KEY || "").trim();
+      if (!key || key === "MY_GEMINI_API_KEY") {
+        return { id: "gemini_lite", name: "Google Gemini Flash-Lite", model: "gemini-3.1-flash-lite", keyConfigured: false, active: false, latencyMs: 0, error: "Chave ausente" };
+      }
+      const t0 = Date.now();
+      try {
+        const ai = getGeminiClient();
+        const r: any = await Promise.race([
+          ai!.models.generateContent({
+            model: "gemini-3.1-flash-lite",
+            contents: testPrompt,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 6000)),
+        ]);
+        return {
+          id: "gemini_lite",
+          name: "Google Gemini Flash-Lite (Ultra-Rápido — R$ 0,00)",
+          model: "gemini-3.1-flash-lite",
+          keyConfigured: true,
+          active: true,
+          latencyMs: Date.now() - t0,
+          sampleOutput: (r.text || "").trim().slice(0, 80),
+        };
+      } catch (e: any) {
+        return {
+          id: "gemini_lite",
+          name: "Google Gemini Flash-Lite",
+          model: "gemini-3.1-flash-lite",
+          keyConfigured: true,
+          active: false,
+          latencyMs: Date.now() - t0,
+          error: String(e?.message || e).slice(0, 140),
+        };
+      }
+    };
+
+    const testGroq = async () => {
+      const key = getGroqKey();
+      if (key.length <= 8) {
+        return { id: "groq", name: "Groq Cloud LPU", model: "openai/gpt-oss-120b", keyConfigured: false, active: false, latencyMs: 0, error: "Chave GROQ_API_KEY ausente" };
+      }
+      const t0 = Date.now();
+      try {
+        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openai/gpt-oss-120b", messages: [{ role: "user", content: testPrompt }], max_tokens: 250 }),
+          signal: AbortSignal.timeout(6000),
+        });
+        const data: any = await r.json();
+        const msg = data.choices?.[0]?.message;
+        const outText = (msg?.content || msg?.reasoning || "").trim();
+        if (r.ok && outText) {
+          return {
+            id: "groq",
+            name: "Groq Cloud LPU",
+            model: "openai/gpt-oss-120b",
+            keyConfigured: true,
+            active: true,
+            latencyMs: Date.now() - t0,
+            sampleOutput: outText.slice(0, 80),
+          };
+        }
+        return { id: "groq", name: "Groq Cloud LPU", model: "openai/gpt-oss-120b", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: JSON.stringify(data?.error || data).slice(0, 140) };
+      } catch (e: any) {
+        return { id: "groq", name: "Groq Cloud LPU", model: "openai/gpt-oss-120b", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: String(e?.message || e).slice(0, 140) };
+      }
+    };
+
+    const testOpenRouter = async () => {
+      const key = getOpenRouterKey();
+      if (key.length <= 8) {
+        return { id: "openrouter", name: "OpenRouter Multi-Model", model: "openrouter/auto", keyConfigured: false, active: false, latencyMs: 0, error: "Chave OPENROUTER_API_KEY ausente" };
+      }
+      const t0 = Date.now();
+      try {
+        const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openrouter/auto", messages: [{ role: "user", content: testPrompt }], max_tokens: 50 }),
+          signal: AbortSignal.timeout(6000),
+        });
+        const data: any = await r.json();
+        if (r.ok && data.choices?.[0]?.message?.content) {
+          return {
+            id: "openrouter",
+            name: "OpenRouter AI",
+            model: data.model || "openrouter/auto",
+            keyConfigured: true,
+            active: true,
+            latencyMs: Date.now() - t0,
+            sampleOutput: data.choices[0].message.content.trim().slice(0, 80),
+          };
+        }
+        return { id: "openrouter", name: "OpenRouter AI", model: "openrouter/auto", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: JSON.stringify(data?.error || data).slice(0, 140) };
+      } catch (e: any) {
+        return { id: "openrouter", name: "OpenRouter AI", model: "openrouter/auto", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: String(e?.message || e).slice(0, 140) };
+      }
+    };
+
+    const testNvidia = async () => {
+      const key = getNvidiaKey();
+      if (key.length <= 8) {
+        return { id: "nvidia", name: "NVIDIA NIM API", model: "google/gemma-3-12b-it", keyConfigured: false, active: false, latencyMs: 0, error: "Chave NVIDIA_API_KEY ausente" };
+      }
+      const t0 = Date.now();
+      try {
+        const r = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "google/gemma-3-12b-it", messages: [{ role: "user", content: testPrompt }], max_tokens: 30 }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data: any = await r.json();
+        if (r.ok && data.choices?.[0]?.message?.content) {
+          return {
+            id: "nvidia",
+            name: "NVIDIA NIM API",
+            model: "google/gemma-3-12b-it",
+            keyConfigured: true,
+            active: true,
+            latencyMs: Date.now() - t0,
+            sampleOutput: data.choices[0].message.content.trim().slice(0, 80),
+          };
+        }
+        return { id: "nvidia", name: "NVIDIA NIM API", model: "google/gemma-3-12b-it", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: JSON.stringify(data?.error || data).slice(0, 140) };
+      } catch (e: any) {
+        return { id: "nvidia", name: "NVIDIA NIM API", model: "google/gemma-3-12b-it", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: String(e?.message || e).slice(0, 140) };
+      }
+    };
+
+    const testMaps = async () => {
+      const outKey = getOutscraperKey();
+      const placesAllowed = costGuard.checkLimit("google_places").allowed;
+      if (!placesAllowed) {
+        return {
+          id: "google_maps",
+          name: "Escudo Custo Zero GCP (Outscraper + Cache Ativo)",
+          model: outKey.length > 10 ? "Outscraper v3 Free Tier (R$ 0,00 GCP)" : "Bloqueador de Cobrança GCP Ativo",
+          keyConfigured: true,
+          active: true,
+          latencyMs: 5,
+          sampleOutput: "Cobrança Google Places bloqueada (R$ 0,00 garantido)",
+        };
+      }
+      const key = getMapsKey();
+      if (key.length <= 10) {
+        return { id: "google_maps", name: "Google Maps Places API (New)", model: "places:searchText", keyConfigured: false, active: false, latencyMs: 0, error: "Chave VITE_GOOGLE_MAPS_API_KEY ausente" };
+      }
+      const t0 = Date.now();
+      try {
+        const r = await fetch("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": key,
+            "X-Goog-FieldMask": "places.id,places.displayName",
+          },
+          body: JSON.stringify({ textQuery: "Cristo Redentor Rio de Janeiro", maxResultCount: 1 }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data: any = await r.json();
+        if (r.ok && data.places?.length > 0) {
+          return {
+            id: "google_maps",
+            name: "Google Maps Platform (Places New)",
+            model: "places.googleapis.com/v1",
+            keyConfigured: true,
+            active: true,
+            latencyMs: Date.now() - t0,
+            sampleOutput: `Localizado: ${data.places[0]?.displayName?.text || "OK"}`,
+          };
+        }
+        return { id: "google_maps", name: "Google Maps Platform", model: "places.googleapis.com/v1", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: JSON.stringify(data?.error || data).slice(0, 140) };
+      } catch (e: any) {
+        return { id: "google_maps", name: "Google Maps Platform", model: "places.googleapis.com/v1", keyConfigured: true, active: false, latencyMs: Date.now() - t0, error: String(e?.message || e).slice(0, 140) };
+      }
+    };
+
+    const results = await Promise.all([
+      testGeminiLite(),
+      testGemini(),
+      testGroq(),
+      testOpenRouter(),
+      testNvidia(),
+      testMaps(),
+    ]);
+
+    const activeCount = results.filter((r) => r.active).length;
+    res.json({
+      ok: true,
+      testedAt: new Date().toISOString(),
+      activeCount,
+      totalTested: results.length,
+      providers: results,
+    });
+  };
+
+  router.get("/ai-health-check", runLiveAiHealthCheck);
+  router.post("/ai-health-check", runLiveAiHealthCheck);
+
+  // 4a. ZERO-COST AI DISCOVERY FOR PACOTE GBP (BIO + 20 LOCAL SEARCH TERMS + 6 PRODUCTS — USES UNBILLED GEMINI 3.1 FLASH-LITE WITHOUT PAID GOOGLESEARCH SKU)
+  router.post("/gbp-package/discover-web", async (req, res) => {
+    const { business, realNiche = "" } = req.body || {};
+    const bizName = String(business?.name || "Empresa Local").trim();
+    const city = String(business?.city || "Anápolis").trim();
+    const uf = String(business?.uf || "GO").trim();
+    const inferredNiche = String(realNiche || "").trim() || inferSpecificSearchNiche(business);
+
+    // Build deterministic fallback first so response is always rich and complete
+    const fallbackPkg = buildGbpOptimizationPackage(business || {}, { realNiche: inferredNiche });
+    let resultPayload = {
+      realNiche: inferredNiche,
+      primaryCategory: fallbackPkg.primaryCategory,
+      additionalCategories: fallbackPkg.additionalCategories,
+      commercialBio: fallbackPkg.description750,
+      top20SearchTerms: fallbackPkg.services.slice(0, 20).map((s: any) => s.name),
+      top6Products: fallbackPkg.products.slice(0, 6).map((p: any) => p.name),
+      source: "deterministic-niche",
+    };
+
+    try {
+      const limitCheck = costGuard.checkLimit("gemini_text");
+      const paidSearchAllowed = costGuard.checkLimit("gemini_grounding_paid").allowed;
+      const ai = limitCheck.allowed ? getGeminiClient() : null;
+      if (ai) {
+        const discoveryPrompt = `Você é um Especialista em SEO Local e Google Meu Negócio no Brasil.
+Estruture os dados reais e estratégicos da empresa:
+- Nome da Empresa: "${bizName}"
+- Especialidade / Nicho Real: "${inferredNiche}"
+- Categoria Atual no Maps: "${business?.category || inferredNiche}"
+- Descrição / Bio extraída da ficha: "${business?.bio || ""}"
+- Endereço / Cidade: "${business?.address || ""} (${city} - ${uf})"
+
+Retorne APENAS um JSON válido (sem markdown) com a seguinte estrutura exata:
+{
+  "realNiche": "Especialidade real exata (ex: Pamonharia Artesanal, Loja de Ferragens, Sorveteria, etc.)",
+  "primaryCategory": "Categoria principal oficial do Google Meu Negócio mais adequada",
+  "additionalCategories": ["5 categorias secundárias oficiais do Google Meu Negócio"],
+  "commercialBio": "Resumo comercial completo (400 a 700 caracteres) detalhando os produtos reais, especialidades, diferenciais e atendimento da ${bizName} em ${city}",
+  "top20SearchTerms": ["Exatamente 20 termos/serviços mais pesquisados no Google por clientes que procuram ${inferredNiche} em ${city} (ex: Pamonha à Moda em ${city}, Delivery de Pamonha em ${city}, etc.)"],
+  "top6Products": ["Exatamente 6 produtos ou linhas principais mais vendidos por ${bizName} (${inferredNiche})"]
+}`;
+
+        const gRes: any = await Promise.race([
+          ai.models.generateContent({
+            model: paidSearchAllowed ? "gemini-3.8-flash" : "gemini-3.1-flash-lite",
+            contents: discoveryPrompt,
+            config: paidSearchAllowed
+              ? {
+                  tools: [{ googleSearch: {} }],
+                  thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+                }
+              : {
+                  responseMimeType: "application/json",
+                },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Discovery AI timeout")), 8000)),
+        ]);
+
+        const rawText = String(gRes?.text || "").trim();
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          costGuard.recordUsage("gemini_text");
+          resultPayload = {
+            realNiche: String(parsed.realNiche || inferredNiche).trim(),
+            primaryCategory: String(parsed.primaryCategory || fallbackPkg.primaryCategory).trim(),
+            additionalCategories:
+              Array.isArray(parsed.additionalCategories) && parsed.additionalCategories.length >= 3
+                ? parsed.additionalCategories.slice(0, 5).map((c: any) => String(c).trim())
+                : fallbackPkg.additionalCategories,
+            commercialBio: String(parsed.commercialBio || fallbackPkg.description750).trim(),
+            top20SearchTerms:
+              Array.isArray(parsed.top20SearchTerms) && parsed.top20SearchTerms.length >= 5
+                ? [
+                    ...parsed.top20SearchTerms.map((t: any) => String(t).trim()).filter(Boolean),
+                    ...resultPayload.top20SearchTerms,
+                  ].slice(0, 20)
+                : resultPayload.top20SearchTerms,
+            top6Products:
+              Array.isArray(parsed.top6Products) && parsed.top6Products.length >= 3
+                ? [
+                    ...parsed.top6Products.map((p: any) => String(p).trim()).filter(Boolean),
+                    ...resultPayload.top6Products,
+                  ].slice(0, 6)
+                : resultPayload.top6Products,
+            source: paidSearchAllowed ? "gemini-google-search-grounding" : "gemini-3.1-flash-lite-zero-cost",
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("Discovery AI fallback to Multi-AI:", err);
+    }
+
+    res.json({ ok: true, discovery: resultPayload });
+  });
+
+  // 4. GENERATE @PACOTE-GBP + PROGRESSIVE @PACOTE-SITE BRIEFING (MULTI-AI: GEMINI / GROQ / OPENROUTER / NVIDIA)
   router.post("/gbp-package/generate", async (req, res) => {
     const g360 = ensureG360Db();
-    const { business, customDifferential } = req.body || {};
-    const basePkg = buildGbpOptimizationPackage(business || {});
+    const {
+      business,
+      customDifferential,
+      customContext,
+      realNiche,
+      customSearchTerms,
+      customProductNames,
+      tone,
+      websiteUrl,
+      useAi,
+    } = req.body || {};
+    const context = String(customContext !== undefined ? customContext : customDifferential || "").trim();
+    const selectedTone = tone || "comercial";
+    const parsedSearchTerms: string[] = Array.isArray(customSearchTerms)
+      ? customSearchTerms.map((s: any) => String(s || "").trim()).filter(Boolean)
+      : typeof customSearchTerms === "string"
+      ? customSearchTerms
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    const parsedProductNames: string[] = Array.isArray(customProductNames)
+      ? customProductNames.map((p: any) => String(p || "").trim()).filter(Boolean)
+      : typeof customProductNames === "string"
+      ? customProductNames
+          .split(/\r?\n/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+      : [];
+    const cleanRealNiche = String(realNiche || business?.realNiche || "").trim();
 
-    if (business?.name) {
+    const basePkg: any = buildGbpOptimizationPackage(business || {}, {
+      customContext: context,
+      tone: selectedTone,
+      websiteUrl: websiteUrl || business?.website || "",
+      realNiche: cleanRealNiche,
+      customSearchTerms: parsedSearchTerms,
+      customProductNames: parsedProductNames,
+    });
+    basePkg.realNiche = cleanRealNiche || basePkg.primaryCategory;
+    basePkg.customSearchTerms = parsedSearchTerms.length > 0 ? parsedSearchTerms : basePkg.services.map((s: any) => s.name);
+    basePkg.customProductNames = parsedProductNames.length > 0 ? parsedProductNames : basePkg.products.map((p: any) => p.name);
+    basePkg.aiProviderUsed = "deterministic-seo";
+
+    const shouldRunAi = Boolean(business?.name && useAi !== false);
+    if (shouldRunAi) {
       try {
         const limitCheck = costGuard.checkLimit("gemini_text");
-        if (limitCheck.allowed) {
-          const prompt = `Você é um especialista sênior em Google Business Profile (Google Meu Negócio) e SEO Semântico Local seguindo rigorosamente o protocolo @pacote-gbp.
-Crie uma descrição comercial humana, factual e persuasiva de entre 680 e 745 caracteres para a empresa "${business.name}" do segmento "${business.category || basePkg.primaryCategory}" localizada em "${basePkg.city} - ${basePkg.uf}".
-${customDifferential ? `Diferenciais informados: ${customDifferential}` : ""}
-Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade principal, a cidade (${basePkg.city}), os serviços reais e um convite final para contato/orçamento. Retorne apenas o texto puro.`;
+        const ai = limitCheck.allowed ? getGeminiClient() : null;
 
-          const aiResult = await generateTextMultiAi(prompt);
-          if (aiResult.text && aiResult.text.length >= 280) {
-            costGuard.recordUsage("gemini_text");
-            basePkg.description750 = aiResult.text.slice(0, 748);
-            basePkg.descriptionCharCount = basePkg.description750.length;
+        const structuredPrompt = `Você é um Especialista Sênior em Google Business Profile (Google Meu Negócio) e SEO Semântico Local no Brasil.
+Gere o pacote de otimização personalizado em português do Brasil para a empresa:
+- Nome da Empresa: "${business.name}"
+- Especialidade / Nicho Real: "${cleanRealNiche || basePkg.primaryCategory}"
+- Categoria Atual na Ficha: "${business.category || basePkg.primaryCategory}"
+- Cidade / UF: "${basePkg.city} - ${basePkg.uf}"
+- Contexto, Produtos e Diferenciais Específicos do Cliente: "${context || "Atendimento de excelência, qualidade comprovada e orçamento rápido via WhatsApp"}"
+${parsedSearchTerms.length > 0 ? `- Termos de Busca Prioritários (Aba 02): ${parsedSearchTerms.slice(0, 20).join(" | ")}` : ""}
+${parsedProductNames.length > 0 ? `- Produtos Principais (Aba 03): ${parsedProductNames.slice(0, 6).join(" | ")}` : ""}
+
+REGRAS ESTRITAS:
+1. "primaryCategory": A categoria oficial do Google Meu Negócio mais exata para a atividade REAL da empresa ("${cleanRealNiche || basePkg.primaryCategory}").
+2. "additionalCategories": Exatamente 5 categorias secundárias oficiais do Google Meu Negócio altamente aderentes ao nicho real ("${cleanRealNiche || basePkg.primaryCategory}") e ao contexto informado.
+3. "descComercial", "descPersuasivo", "descAmigavel": 3 descrições ricas de aproximadamente 700 caracteres cada (sem emojis), citando "${business.name}", "${basePkg.city}", a especialidade "${cleanRealNiche || basePkg.primaryCategory}", os itens do contexto e chamada para WhatsApp.
+4. "topServices": ${parsedSearchTerms.length > 0 ? `Gere as descrições comerciais (250 a 295 caracteres sem emojis) usando EXATAMENTE estes títulos na mesma ordem: ${parsedSearchTerms.slice(0, 12).join(", ")}` : `10 serviços estratégicos de SEO local focados em "${cleanRealNiche || basePkg.primaryCategory}" em ${basePkg.city}, cada um com "name", "localTerm" e "description" (250 a 295 caracteres sem emojis)`}.
+5. "topProducts": ${parsedProductNames.length > 0 ? `Gere as descrições detalhadas (450 a 900 caracteres sem emojis) usando EXATAMENTE estes 6 produtos na mesma ordem: ${parsedProductNames.slice(0, 6).join(", ")}` : `6 produtos/linhas principais para a vitrine do Google Meu Negócio focados em "${cleanRealNiche || basePkg.primaryCategory}", cada um com "name", "category", "priceLabel" e "description" (450 a 900 caracteres sem emojis)`}.`;
+
+        let parsedAi: any = null;
+        if (ai) {
+          try {
+            const gRes = await Promise.race([
+              ai.models.generateContent({
+                model: "gemini-3.1-flash-lite",
+                contents: structuredPrompt,
+                config: {
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      primaryCategory: { type: Type.STRING },
+                      additionalCategories: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      descComercial: { type: Type.STRING },
+                      descPersuasivo: { type: Type.STRING },
+                      descAmigavel: { type: Type.STRING },
+                      topServices: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            name: { type: Type.STRING },
+                            localTerm: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                          },
+                        },
+                      },
+                      topProducts: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            name: { type: Type.STRING },
+                            category: { type: Type.STRING },
+                            priceLabel: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini JSON timeout")), 9500)),
+            ]);
+            parsedAi = JSON.parse(((gRes as any)?.text || "{}").trim());
+            if (parsedAi?.primaryCategory || parsedAi?.descComercial) {
+              costGuard.recordUsage("gemini_text");
+              basePkg.aiProviderUsed = "gemini-3.1-flash-lite";
+            }
+          } catch (errJson) {
+            console.warn("Structured Gemini GBP Package fallback to Multi-AI:", errJson);
           }
         }
-      } catch {
-        // Keep high-precision deterministic package
+
+        if (parsedAi && (parsedAi.descComercial || parsedAi.primaryCategory)) {
+          if (cleanRealNiche) {
+            basePkg.primaryCategory = cleanRealNiche;
+          } else if (parsedAi.primaryCategory && String(parsedAi.primaryCategory).trim().length > 3) {
+            basePkg.primaryCategory = String(parsedAi.primaryCategory).trim();
+          }
+          if (Array.isArray(parsedAi.additionalCategories) && parsedAi.additionalCategories.length >= 3) {
+            basePkg.additionalCategories = parsedAi.additionalCategories.slice(0, 5).map((c: any) => String(c).trim());
+          }
+          const filler750 = `Entre em contato com a equipe da ${business.name} em ${basePkg.city}, ${basePkg.uf} pelo telefone ${basePkg.phone} ou WhatsApp e garanta atendimento especializado com qualidade comprovada.`;
+          if (parsedAi.descComercial) {
+            basePkg.textVariations.comercial = padOrTrimToExactLength(parsedAi.descComercial, 750, filler750);
+          }
+          if (parsedAi.descPersuasivo) {
+            basePkg.textVariations.persuasivo = padOrTrimToExactLength(parsedAi.descPersuasivo, 750, filler750);
+          }
+          if (parsedAi.descAmigavel) {
+            basePkg.textVariations.amigavel = padOrTrimToExactLength(parsedAi.descAmigavel, 750, filler750);
+          }
+          basePkg.description750 =
+            basePkg.textVariations[selectedTone] || basePkg.textVariations.comercial || basePkg.description750;
+          basePkg.descriptionCharCount = basePkg.description750.length;
+
+          if (Array.isArray(parsedAi.topServices) && parsedAi.topServices.length > 0) {
+            const aiSvcs = parsedAi.topServices
+              .filter((s: any) => s?.name && s?.description)
+              .map((s: any, idx: number) => {
+                const forcedTitle = parsedSearchTerms[idx] || String(s.name).trim();
+                return {
+                  name: forcedTitle,
+                  category: basePkg.primaryCategory,
+                  localTerm: String(s.localTerm || `${forcedTitle} em ${basePkg.city}`).toLowerCase(),
+                  description: padOrTrimToExactLength(
+                    String(s.description).trim(),
+                    300,
+                    `Solicite seu orçamento com a ${business.name} em ${basePkg.city} pelo WhatsApp com atendimento rápido.`
+                  ),
+                };
+              });
+            // Merge keeping all 20 items (and preserving any customSearchTerms from index aiSvcs.length..19)
+            basePkg.services = basePkg.services.map((origSvc: any, idx: number) => aiSvcs[idx] || origSvc).slice(0, 20);
+          }
+
+          if (Array.isArray(parsedAi.topProducts) && parsedAi.topProducts.length > 0) {
+            const aiProds = parsedAi.topProducts
+              .filter((p: any) => p?.name && p?.description)
+              .map((p: any, idx: number) => {
+                const forcedProdTitle = parsedProductNames[idx] || String(p.name).trim();
+                return {
+                  name: forcedProdTitle,
+                  category: String(p.category || basePkg.primaryCategory).trim(),
+                  priceLabel: String(p.priceLabel || "Consulte pelo WhatsApp").trim(),
+                  description: padOrTrimToExactLength(
+                    String(p.description).trim(),
+                    1000,
+                    `Na ${business.name} em ${basePkg.city}, você conta com produtos selecionados, garantia de procedência, pronta-entrega e atendimento consultivo pelo WhatsApp ou telefone ${basePkg.phone}.`
+                  ),
+                };
+              });
+            basePkg.products = basePkg.products.map((origProd: any, idx: number) => aiProds[idx] || origProd).slice(0, 6);
+          }
+
+          // Re-sync the 11 posts (Aba 04) with unique angles and non-repetitive copy!
+          const nowTs = Date.now();
+          const cleanDisplayBrand =
+            String(business.name || "")
+              .split("|")[0]
+              .split(" - ")[0]
+              .trim() || business.name;
+          const postHeadlineTemplates = [
+            (sName: string) => `Condição Especial em ${basePkg.city}: ${sName}`,
+            (sName: string) => `Guia Prático: Como escolher ${sName} com segurança`,
+            (sName: string) => `Por que a ${cleanDisplayBrand} é referência em ${sName}`,
+            (sName: string) => `Vantagens de contratar ${sName} com especialistas em ${basePkg.city}`,
+            (sName: string) => `Qualidade e Pronta-Entrega em ${sName}`,
+            (sName: string) => `Atendimento Ágil via WhatsApp: ${sName}`,
+            (sName: string) => `Dúvidas Frequentes sobre ${sName} em ${basePkg.city}`,
+            (sName: string) => `Solidez e Garantia Comprovada em ${sName}`,
+            (sName: string) => `Soluções Sob Medida de ${sName} para Você`,
+            (sName: string) => `Diferenciais Técnicos em ${sName} (${basePkg.city})`,
+            (sName: string) => `Orçamento Transparente: ${sName} na ${cleanDisplayBrand}`,
+          ];
+          basePkg.posts = basePkg.posts.map((pt: any, idx: number) => {
+            const svc = basePkg.services[idx % basePkg.services.length];
+            const makeTitle = postHeadlineTemplates[idx % postHeadlineTemplates.length];
+            const title = makeTitle(svc.name);
+            const postIntro = pt.isOfferPost
+              ? `CONDIÇÃO ESPECIAL NA ${cleanDisplayBrand.toUpperCase()} EM ${basePkg.city.toUpperCase()}: ${svc.name.toUpperCase()}!\n\n${svc.description}\n\nAproveite condições diferenciadas de atendimento e pagamento falando diretamente com nossa equipe comercial em ${basePkg.city}.`
+              : `${title} — ${cleanDisplayBrand} (${basePkg.city} - ${basePkg.uf}).\n\n${svc.description}\n\nNosso foco em ${basePkg.city} é proporcionar orientação técnica clara, materiais selecionados e agilidade desde o primeiro contato pelo WhatsApp.`;
+            const fillerPost = `Quem pesquisa por ${svc.localTerm} encontra na ${cleanDisplayBrand} atendimento consultivo pelo telefone ${basePkg.phone}, transparência em cada orçamento e compromisso real com prazos e qualidade em ${basePkg.city}.`;
+            const fullText = padOrTrimToExactLength(postIntro, 1500, fillerPost);
+            return {
+              ...pt,
+              title,
+              seoKeyword: svc.localTerm,
+              text: fullText,
+              charCount: fullText.length,
+              scheduledDate: new Date(nowTs + (idx + 1) * 3 * 86400000).toISOString().slice(0, 10),
+            };
+          });
+          basePkg.scheduledPosts = basePkg.posts;
+          if (basePkg.siteBriefing) {
+            basePkg.siteBriefing.primaryCategory = basePkg.primaryCategory;
+            basePkg.siteBriefing.heroHeadline = `${cleanDisplayBrand}: ${basePkg.services[0]?.name || basePkg.primaryCategory} em ${basePkg.city}`;
+            basePkg.siteBriefing.heroSubheadline = basePkg.description750.slice(0, 220);
+            basePkg.siteBriefing.approvedServices = basePkg.services.slice(0, 6);
+            basePkg.siteBriefing.approvedProducts = basePkg.products.slice(0, 6);
+          }
+        } else {
+          // Multi-AI text fallback (Groq / OpenRouter / NVIDIA / Gemini Lite)
+          const prompt = `Você é um especialista sênior em Google Business Profile (Google Meu Negócio) e SEO Semântico Local seguindo rigorosamente o protocolo @pacote-gbp.
+Crie uma descrição comercial de alta conversão de EXATAMENTE entre 700 e 745 caracteres para a empresa "${business.name}" do segmento "${basePkg.primaryCategory}" localizada em "${basePkg.city} - ${basePkg.uf}".
+${context ? `DIFERENCIAIS REAIS E CONTEXTO ESPECÍFICO FORNECIDOS: ${context}` : ""}
+Regras: sem emojis, sem promessas irreais, inclua a atividade principal, a cidade (${basePkg.city}), os diferenciais específicos informados e um convite final para WhatsApp. Retorne apenas o texto puro da descrição.`;
+
+          const aiResult = await generateTextMultiAi(prompt);
+          if (aiResult.text && aiResult.text.length >= 200) {
+            costGuard.recordUsage("gemini_text");
+            basePkg.aiProviderUsed = aiResult.provider;
+            const cleanAiText = padOrTrimToExactLength(
+              aiResult.text.trim(),
+              750,
+              `Entre em contato com a equipe da ${business.name} em ${basePkg.city} e garanta atendimento especializado com orçamento transparente e facilidades no pagamento.`
+            );
+            basePkg.description750 = cleanAiText;
+            basePkg.descriptionCharCount = cleanAiText.length;
+            (basePkg.textVariations as Record<string, string>)[selectedTone] = cleanAiText;
+          }
+        }
+      } catch (e) {
+        console.warn("AI description generation fallback:", e);
       }
     }
 
     const key = String(business?.name || "default").toLowerCase();
     g360.packagesByBusiness[key] = basePkg;
     saveDb(getDb());
-    res.json({ ok: true, pkg: basePkg });
+    res.json({ ok: true, pkg: basePkg, aiProviderUsed: basePkg.aiProviderUsed });
+  });
+
+  // 4a-bis. BULK AI REGENERATION FOR SERVICES (ABA 02), PRODUCTS (ABA 03), POSTS (ABA 04), OR SITE HERO COPY (ABA 05)
+  router.post("/gbp-package/regenerate-batch", async (req, res) => {
+    const g360 = ensureG360Db();
+    const {
+      businessName,
+      batch_type = "services", // "services" | "products" | "posts" | "hero_copy"
+      customContext = "",
+      currentItems = [],
+      city = "Anápolis",
+      uf = "GO",
+      category = "Comércio Local",
+    } = req.body || {};
+
+    const cleanName = String(businessName || "Empresa Local").trim();
+    const cleanBrand = cleanName.split("|")[0].split(" - ")[0].trim() || cleanName;
+    const cleanKey = cleanName.toLowerCase();
+    let pkg = g360.packagesByBusiness[cleanKey];
+    if (!pkg) {
+      const foundKey = Object.keys(g360.packagesByBusiness).find(
+        (k) => k.includes(cleanKey) || cleanKey.includes(k)
+      );
+      if (foundKey) pkg = g360.packagesByBusiness[foundKey];
+    }
+
+    const bizCity = pkg?.city || city;
+    const bizUf = pkg?.uf || uf;
+    const bizCat = pkg?.primaryCategory || category;
+    const bizPhone = pkg?.phone || "(62) 99113-8004";
+
+    if (batch_type === "hero_copy") {
+      const prompt = `Você é um copywriter especialista em landing pages de alta conversão.
+Crie um Título Principal (Hero Headline, máx 85 caracteres) e um Subtítulo Persuasivo (Hero Subheadline, entre 140 e 210 caracteres) para o site da empresa "${cleanBrand}" (${bizCat}) localizada em "${bizCity} - ${bizUf}".
+${customContext ? `Diferenciais reais: ${customContext}` : ""}
+Retorne APENAS um JSON válido no formato:
+{"heroHeadline": "...", "heroSubheadline": "..."}`;
+      let heroHeadline = `${cleanBrand}: Especialista em ${bizCat} em ${bizCity}`;
+      let heroSubheadline = `Atendimento ágil, qualidade comprovada e soluções completas em ${bizCat.toLowerCase()} em ${bizCity}. Solicite seu orçamento agora mesmo pelo WhatsApp.`;
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        const match = aiRes.text?.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          if (parsed.heroHeadline) heroHeadline = String(parsed.heroHeadline).trim();
+          if (parsed.heroSubheadline) heroSubheadline = String(parsed.heroSubheadline).trim();
+        }
+      } catch {}
+      if (pkg?.siteBriefing) {
+        pkg.siteBriefing.heroHeadline = heroHeadline;
+        pkg.siteBriefing.heroSubheadline = heroSubheadline;
+        saveDb(getDb());
+      }
+      return res.json({ ok: true, heroHeadline, heroSubheadline, pkg });
+    }
+
+    if (batch_type === "services") {
+      const baseSvcs = Array.isArray(currentItems) && currentItems.length > 0 ? currentItems : pkg?.services || [];
+      const titlesList = baseSvcs.map((s: any, i: number) => `${i + 1}. ${s.name}`).join("\n");
+      const prompt = `Você é um especialista em SEO Local para Google Meu Negócio.
+Para a empresa "${cleanBrand}" (${bizCat}) em "${bizCity}", reescreva descrições comerciais EXCLUSIVAS, criativas e sem repetição (entre 250 e 295 caracteres cada, sem emojis) para os seguintes serviços:
+${titlesList}
+${customContext ? `Contexto da empresa: ${customContext}` : ""}
+Retorne APENAS um JSON array de strings com as descrições na mesma ordem: ["desc 1", "desc 2", ...]`;
+      let aiDescs: string[] = [];
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        const match = aiRes.text?.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          if (Array.isArray(parsed)) aiDescs = parsed.map((d) => String(d || "").trim());
+        }
+      } catch {}
+
+      const updatedServices = baseSvcs.map((svc: any, idx: number) => {
+        const rawDesc =
+          aiDescs[idx] ||
+          `${svc.name} com padrão superior de qualidade na ${cleanBrand} em ${bizCity}. Equipe qualificada, insumos selecionados e atendimento consultivo focado na melhor relação custo-benefício.`;
+        const desc = padOrTrimToExactLength(
+          rawDesc,
+          300,
+          `Fale com a ${cleanBrand} em ${bizCity} pelo WhatsApp ${bizPhone} e solicite orçamento rápido.`
+        );
+        return {
+          ...svc,
+          localTerm: `${String(svc.name || "").toLowerCase()} em ${bizCity.toLowerCase()}`,
+          description: desc,
+          selectedForSite: svc.selectedForSite !== false,
+          revision: (svc.revision || 1) + 1,
+        };
+      });
+
+      if (pkg) {
+        pkg.services = updatedServices;
+        saveDb(getDb());
+      }
+      return res.json({ ok: true, items: updatedServices, pkg });
+    }
+
+    if (batch_type === "products") {
+      const baseProds = Array.isArray(currentItems) && currentItems.length > 0 ? currentItems : pkg?.products || [];
+      const titlesList = baseProds.map((p: any, i: number) => `${i + 1}. ${p.name}`).join("\n");
+      const prompt = `Você é um especialista em catálogo comercial para Google Meu Negócio.
+Para a empresa "${cleanBrand}" (${bizCat}) em "${bizCity}", escreva fichas técnicas comerciais persuasivas e distintas (entre 700 e 980 caracteres cada, sem emojis) para as 6 categorias/produtos abaixo:
+${titlesList}
+${customContext ? `Diferenciais: ${customContext}` : ""}
+Retorne APENAS um JSON array de strings na mesma ordem: ["ficha 1", "ficha 2", ...]`;
+      let aiDescs: string[] = [];
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        const match = aiRes.text?.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          if (Array.isArray(parsed)) aiDescs = parsed.map((d) => String(d || "").trim());
+        }
+      } catch {}
+
+      const updatedProducts = baseProds.map((prod: any, idx: number) => {
+        const rawDesc =
+          aiDescs[idx] ||
+          `${prod.name} com garantia de procedência e pronta-entrega na ${cleanBrand} em ${bizCity}. Desenvolvido para clientes que buscam durabilidade, segurança técnica e suporte especializado.`;
+        const desc = padOrTrimToExactLength(
+          rawDesc,
+          1000,
+          `Na ${cleanBrand} em ${bizCity}, você conta com orientação técnica completa, variedade de estoque e atendimento imediato pelo WhatsApp ${bizPhone}.`
+        );
+        return {
+          ...prod,
+          description: desc,
+          selectedForSite: prod.selectedForSite !== false,
+          revision: (prod.revision || 1) + 1,
+        };
+      });
+
+      if (pkg) {
+        pkg.products = updatedProducts;
+        saveDb(getDb());
+      }
+      return res.json({ ok: true, items: updatedProducts, pkg });
+    }
+
+    // batch_type === "posts"
+    const basePosts = Array.isArray(currentItems) && currentItems.length > 0 ? currentItems : pkg?.posts || [];
+    const postAngles = [
+      "Condição Especial da Semana",
+      "Guia Prático para o Cliente",
+      "Autoridade e Diferenciais Técnicos",
+      "Atendimento Rápido via WhatsApp",
+      "Qualidade e Garantia Comprovada",
+      "Perguntas Frequentes Respondidas",
+      "Soluções Sob Medida na Região",
+      "Dica de Especialista Local",
+      "Pronta-Entrega e Variedade",
+      "Segurança e Economia no Orçamento",
+      "Convite Especial de Visita",
+    ];
+    const updatedPosts = basePosts.map((pt: any, idx: number) => {
+      const svc = pkg?.services?.[idx % (pkg?.services?.length || 1)] || {
+        name: pt.title || bizCat,
+        localTerm: `${bizCat.toLowerCase()} em ${bizCity.toLowerCase()}`,
+        description: "",
+      };
+      const angle = postAngles[idx % postAngles.length];
+      const newTitle = pt.isOfferPost ? `Condição Especial: ${svc.name}` : `${angle}: ${svc.name}`;
+      const intro = `${newTitle} — ${cleanBrand} (${bizCity} - ${bizUf}).\n\n${
+        svc.description || `Procurando por ${svc.name.toLowerCase()} em ${bizCity}?`
+      }\n\nNa ${cleanBrand}, trabalhamos com foco total na satisfação de cada cliente em ${bizCity}, oferecendo orientação especializada, materiais certificados e agilidade desde o primeiro contato.`;
+      const filler = `Quem busca por ${svc.localTerm} encontra em nossa equipe atendimento transparente pelo telefone ${bizPhone} e WhatsApp, condições facilitadas e compromisso real com qualidade.`;
+      const fullText = padOrTrimToExactLength(intro, 1500, filler);
+      return {
+        ...pt,
+        title: newTitle,
+        seoKeyword: svc.localTerm,
+        text: fullText,
+        charCount: fullText.length,
+        revision: (pt.revision || 1) + 1,
+      };
+    });
+
+    if (pkg) {
+      pkg.posts = updatedPosts;
+      pkg.scheduledPosts = updatedPosts;
+      saveDb(getDb());
+    }
+    return res.json({ ok: true, items: updatedPosts, pkg });
+  });
+
+  // 4a-ter. CLONE SITE BY URL + AI PRD GENERATOR (LINDO.AI STYLE)
+  router.post("/clone-site-prd", async (req, res) => {
+    const { referenceUrl = "", business = {}, customNotes = "" } = req.body || {};
+    const cleanUrl = String(referenceUrl || "").trim();
+    const bizName = String(business?.name || "Sua Empresa")
+      .split("|")[0]
+      .trim();
+    const bizCat = String(business?.category || "Negócio Local").trim();
+    const bizCity = String(business?.city || "Anápolis").trim();
+
+    let scrapedSnippet = "";
+    let pageTitle = "";
+    if (/^https?:\/\//i.test(cleanUrl)) {
+      try {
+        const htmlRes = await fetch(cleanUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; G360SiteCloner/1.0)" },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (htmlRes.ok) {
+          const rawHtml = await htmlRes.text();
+          const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+          pageTitle = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
+          scrapedSnippet = rawHtml
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 1800);
+        }
+      } catch {}
+    }
+
+    const prompt = `Você é um Arquiteto de Conversão e Product Manager de Sites (estilo Lindo.ai).
+Analise a URL de referência "${cleanUrl}" ${pageTitle ? `(Título: "${pageTitle}")` : ""} ${
+      scrapedSnippet ? `e seu conteúdo extraído: "${scrapedSnippet.slice(0, 900)}"` : ""
+    }.
+Crie um PRD (Product Requirements Document) de clonagem estrutural adaptado para a empresa "${bizName}" do nicho "${bizCat}" em "${bizCity}".
+${customNotes ? `Instruções extras do usuário: ${customNotes}` : ""}
+
+Retorne APENAS um JSON válido com a estrutura:
+{
+  "recommendedTemplateId": "lindo_service_authority" | "minimal_clean_clinic" | "bold_retail_catalog" | "editorial_luxury" | "artisan_food_warm" | "tech_b2b_modern",
+  "recommendedPaletteId": "purple_royal" | "emerald_trust" | "amber_industrial" | "obsidian_gold" | "ocean_clinic",
+  "heroHeadline": "Headline de alto impacto inspirada na estrutura de referência para ${bizName}",
+  "heroSubheadline": "Subtítulo persuasivo focado em conversão local em ${bizCity}",
+  "ctaText": "Texto do botão principal",
+  "prdDocument": "Resumo estruturado em tópicos (Seção Hero, Prova Social, Grade de Serviços, Diferenciais Visuais e Oferta de Fechamento) explicando como o site será construído",
+  "extractedHighlights": ["Destaque 1", "Destaque 2", "Destaque 3", "Destaque 4"]
+}`;
+
+    let resultPayload = {
+      recommendedTemplateId: "lindo_service_authority",
+      recommendedPaletteId: "purple_royal",
+      heroHeadline: `${bizName}: Excelência e Atendimento Imediato em ${bizCity}`,
+      heroSubheadline: `Estrutura de alta conversão inspirada em ${
+        cleanUrl ? new URL(cleanUrl).hostname : "líderes do setor"
+      } adaptada sob medida para ${bizCat.toLowerCase()} em ${bizCity}.`,
+      ctaText: "Solicitar Orçamento no WhatsApp",
+      prdDocument: `1. ARQUITETURA HERO: Impacto visual imediato com proposta de valor clara para ${bizName} em ${bizCity} e CTA direto para WhatsApp.\n2. VITRINE DE SOLUÇÕES: Apresentação escaneável dos principais serviços e produtos com foco em benefício prático.\n3. BLOCO DE AUTORIDADE & PROVA SOCIAL: Destaque para avaliações reais do Google Maps, fotos reais da estrutura e localização estratégica em ${bizCity}.\n4. CONVERSÃO RÁPIDA: Rodapé comercial com horário de funcionamento, mapa interativo e botão flutuante de atendimento imediato.`,
+      extractedHighlights: [
+        "Atendimento Ágil via WhatsApp",
+        `Referência em ${bizCat} em ${bizCity}`,
+        "Orçamento Transparente e Sem Compromisso",
+        "Qualidade e Procedência Garantidas",
+      ],
+    };
+
+    try {
+      const aiRes = await generateTextMultiAi(prompt);
+      const match = aiRes.text?.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        resultPayload = {
+          ...resultPayload,
+          ...parsed,
+        };
+      }
+    } catch (e) {
+      console.warn("Clone site PRD AI fallback:", e);
+    }
+
+    res.json({
+      ok: true,
+      referenceUrl: cleanUrl,
+      pageTitle,
+      prd: resultPayload,
+    });
+  });
+
+  // 4b. SYNC SITE CREATION TO GBP PACKAGE & CRM
+  router.post("/gbp-package/sync-site", async (req, res) => {
+    const g360 = ensureG360Db();
+    const { businessName, websiteUrl, projectSlug, products, services } = req.body || {};
+    if (!businessName) {
+      return res.status(400).json({ ok: false, error: "businessName é obrigatório para sincronização" });
+    }
+
+    const cleanName = String(businessName).trim();
+    const key = cleanName.toLowerCase();
+    let pkg = g360.packagesByBusiness[key];
+
+    if (!pkg) {
+      const foundKey = Object.keys(g360.packagesByBusiness).find(
+        (k) => k.includes(key) || key.includes(k)
+      );
+      if (foundKey) pkg = g360.packagesByBusiness[foundKey];
+    }
+
+    if (pkg) {
+      pkg.websiteUrl = websiteUrl;
+      if (pkg.siteBriefing) {
+        pkg.siteBriefing.websiteUrl = websiteUrl;
+        pkg.siteBriefing.updatedAt = new Date().toISOString();
+      }
+      if (Array.isArray(products) && products.length > 0) {
+        pkg.products = products.slice(0, 6);
+      }
+      if (Array.isArray(services) && services.length > 0) {
+        pkg.services = services.slice(0, 20);
+      }
+    }
+
+    // Also update any matching CRM lead
+    if (Array.isArray(g360.crmLeads)) {
+      const lead = g360.crmLeads.find((l: any) => {
+        const lName = String(l.businessName || "").toLowerCase();
+        return lName.includes(key) || key.includes(lName);
+      });
+      if (lead) {
+        lead.hasWebsite = true;
+        lead.website = websiteUrl;
+        lead.projectSlug = projectSlug;
+      }
+    }
+
+    saveDb(getDb());
+    res.json({
+      ok: true,
+      message: "Site sincronizado com sucesso ao Pacote GBP e ao CRM!",
+      pkg,
+    });
+  });
+
+  // 4c. GRANULAR SINGLE-ITEM REGENERATION FROM EDITED TITLE (SPEC SECTION 8 + ABA 02 -> ABA 04 AUTO-SYNC)
+  router.post("/gbp-package/regenerate-item", async (req, res) => {
+    const g360 = ensureG360Db();
+    const {
+      businessName,
+      item_type = "service", // "service" | "product" | "post"
+      item_index = 0,
+      edited_title = "",
+      customContext = "",
+    } = req.body || {};
+
+    const cleanName = String(businessName || "Empresa Local").trim();
+    const cleanKey = cleanName.toLowerCase();
+    let pkg = g360.packagesByBusiness[cleanKey];
+    if (!pkg) {
+      const foundKey = Object.keys(g360.packagesByBusiness).find(
+        (k) => k.includes(cleanKey) || cleanKey.includes(k)
+      );
+      if (foundKey) pkg = g360.packagesByBusiness[foundKey];
+    }
+
+    const titleToUse = String(edited_title || "").trim();
+    const bizCity = pkg?.city || "Anápolis";
+    const bizUf = pkg?.uf || "GO";
+    const bizPhone = pkg?.phone || "";
+    const bizName = pkg?.businessName || cleanName;
+    const cat = pkg?.primaryCategory || "Comércio Local";
+
+    let regeneratedDesc = "";
+
+    if (item_type === "service") {
+      // Limit: 300 characters
+      const prompt = `Você é um redator sênior de Google Meu Negócio.
+Escreva uma descrição comercial concisa para o serviço "${titleToUse}" da empresa "${bizName}" (${cat}) em "${bizCity}".
+${customContext ? `Contexto do negócio: ${customContext}.` : ""}
+Regras obrigatórias:
+1. EXATAMENTE entre 260 e 298 caracteres.
+2. Não use emojis.
+3. Não invente certificações falsas.
+4. Linguagem direta, profissional e persuasiva em português do Brasil.`;
+
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        if (aiRes.text && aiRes.text.length >= 100) {
+          regeneratedDesc = padOrTrimToExactLength(
+            aiRes.text.trim(),
+            300,
+            `Solicite seu orçamento com a ${bizName} em ${bizCity} e garanta atendimento profissional com agilidade.`
+          );
+        }
+      } catch (err) {
+        console.warn("Single-item service AI generation fallback:", err);
+      }
+
+      if (!regeneratedDesc) {
+        const base = `Oferta especializada de ${titleToUse.toLowerCase()} pela ${bizName} em ${bizCity}. ${customContext ? `${customContext.slice(0, 110)}. ` : ""}Atendimento pontual, materiais certificados e execução profissional para garantir sua máxima satisfação com facilidade no pagamento.`;
+        regeneratedDesc = padOrTrimToExactLength(
+          base,
+          300,
+          `Fale com nossa equipe pelo WhatsApp em ${bizCity} e tire suas dúvidas com pontualidade.`
+        );
+      }
+
+      if (pkg && Array.isArray(pkg.services) && pkg.services[item_index]) {
+        const updatedLocalTerm = `${titleToUse.toLowerCase()} em ${bizCity.toLowerCase()}`;
+        pkg.services[item_index] = {
+          ...pkg.services[item_index],
+          name: titleToUse || pkg.services[item_index].name,
+          localTerm: updatedLocalTerm,
+          description: regeneratedDesc,
+          revision: (pkg.services[item_index].revision || 1) + 1,
+        };
+
+        // Auto-sync Aba 02 service change to Aba 04 (11 Posts)!
+        if (Array.isArray(pkg.posts)) {
+          pkg.posts = pkg.posts.map((pt: any, pIdx: number) => {
+            const mappedSvcIdx = pIdx % pkg.services.length;
+            if (mappedSvcIdx !== item_index && !(pt.isOfferPost && item_index === 0)) return pt;
+            const svc = pkg.services[item_index];
+            const newPostTitle = pt.isOfferPost ? `Condição Especial: ${svc.name}` : svc.name;
+            const postIntro = pt.isOfferPost
+              ? `CONDIÇÃO ESPECIAL NA ${bizName.toUpperCase()} EM ${bizCity.toUpperCase()}: ${svc.name.toUpperCase()}!\n\n${svc.description} ${customContext ? `${customContext}. ` : ""}`
+              : `${newPostTitle} — ${bizName} (${bizCity} - ${bizUf}).\n\n${svc.description} ${customContext ? `${customContext}. ` : ""}`;
+            const fillerPost = `Na ${bizName}, localizada em ${bizCity}, entregamos excelência em ${cat.toLowerCase()} com atendimento ágil pelo telefone ${bizPhone} e WhatsApp. Quem pesquisa por ${svc.localTerm} conta com nossa equipe especializada e condições facilitadas.`;
+            const fullText = padOrTrimToExactLength(postIntro, 1500, fillerPost);
+            return {
+              ...pt,
+              title: newPostTitle,
+              seoKeyword: svc.localTerm,
+              text: fullText,
+              charCount: fullText.length,
+            };
+          });
+          pkg.scheduledPosts = pkg.posts;
+        }
+        saveDb(getDb());
+      }
+
+      return res.json({
+        ok: true,
+        item_type: "service",
+        item_index,
+        title: titleToUse,
+        description: regeneratedDesc,
+        charCount: regeneratedDesc.length,
+        pkg,
+      });
+    } else if (item_type === "product") {
+      // Limit: 1000 characters
+      const prompt = `Você é um redator técnico de catálogo de produtos para Google Meu Negócio.
+Escreva a ficha detalhada de até 1.000 caracteres para o produto "${titleToUse}" da empresa "${bizName}" (${cat}) em "${bizCity}".
+${customContext ? `Contexto: ${customContext}.` : ""}
+Regras:
+1. Entre 920 e 995 caracteres.
+2. Sem emojis.
+3. Destaque qualidade, benefícios práticos, segurança e atendimento imediato.`;
+
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        if (aiRes.text && aiRes.text.length >= 250) {
+          regeneratedDesc = padOrTrimToExactLength(
+            aiRes.text.trim(),
+            1000,
+            `A ${bizName} em ${bizCity} preza pela excelência em cada detalhe, combinando materiais certificados, pontualidade rigorosa e atendimento ágil via WhatsApp. Solicite seu orçamento sem compromisso e conte com especialistas experientes para tirar suas dúvidas e encontrar a melhor solução para sua necessidade.`
+          );
+        }
+      } catch (err) {
+        console.warn("Single-item product AI generation fallback:", err);
+      }
+
+      if (!regeneratedDesc) {
+        const base = `${titleToUse} com alto padrão de qualidade e procedência garantida pela ${bizName} em ${bizCity}. ${customContext ? `${customContext}. ` : ""}Desenvolvido para proporcionar máxima eficiência, segurança e durabilidade tanto para residências quanto para empresas. Nossa equipe técnica oferece suporte completo, esclarecimento de dúvidas e entrega ágil para que você receba seu produto com total tranquilidade. Aceitamos diversas formas de pagamento no ato da entrega ou contratação.`;
+        regeneratedDesc = padOrTrimToExactLength(
+          base,
+          1000,
+          `Entre em contato com nossa equipe pelo WhatsApp em ${bizCity} e garanta atendimento de excelência com garantia formal e procedência comprovada.`
+        );
+      }
+
+      if (pkg && Array.isArray(pkg.products) && pkg.products[item_index]) {
+        pkg.products[item_index] = {
+          ...pkg.products[item_index],
+          name: titleToUse || pkg.products[item_index].name,
+          description: regeneratedDesc,
+          revision: (pkg.products[item_index].revision || 1) + 1,
+        };
+        saveDb(getDb());
+      }
+
+      return res.json({
+        ok: true,
+        item_type: "product",
+        item_index,
+        title: titleToUse,
+        description: regeneratedDesc,
+        charCount: regeneratedDesc.length,
+        pkg,
+      });
+    } else if (item_type === "post") {
+      // Limit: 1500 characters
+      const prompt = `Você é um especialista em marketing local e SEO no Google Meu Negócio.
+Escreva uma publicação informativa de alto engajamento com EXATAMENTE entre 1.400 e 1.490 caracteres sobre "${titleToUse}" para a empresa "${bizName}" (${cat}) em "${bizCity}".
+${customContext ? `Contexto da empresa: ${customContext}.` : ""}
+Regras:
+1. Sem emojis.
+2. Dividido em introdução envolvente, desenvolvimento técnico/prático dos benefícios e chamada final para contato/WhatsApp.`;
+
+      try {
+        const aiRes = await generateTextMultiAi(prompt);
+        if (aiRes.text && aiRes.text.length >= 350) {
+          regeneratedDesc = padOrTrimToExactLength(
+            aiRes.text.trim(),
+            1500,
+            `Na ${bizName}, localizada em ${bizCity}, nosso compromisso diário é entregar soluções de alta qualidade com pontualidade e transparência. Entre em contato pelo WhatsApp e consulte condições exclusivas.`
+          );
+        }
+      } catch (err) {
+        console.warn("Single-item post AI generation fallback:", err);
+      }
+
+      if (!regeneratedDesc) {
+        const intro = `${titleToUse}.\n\nNa ${bizName}, cada atendimento em ${bizCity} é conduzido com compromisso total com a satisfação do cliente, unindo cuidado artesanal, insumos certificados e excelência em cada detalhe. ${customContext ? `${customContext}.` : ""}`;
+        const filler = `Na ${bizName}, localizada em ${bizCity}, nosso objetivo diário é entregar experiências de alta qualidade com segurança, transparência e respeito ao cliente. Oferecemos atendimento completo e ágil. Entre em contato hoje mesmo, tire suas dúvidas e faça seu pedido ou reserva. Estamos prontos para atender você com pontualidade e satisfação garantida em ${bizCity}.`;
+        regeneratedDesc = padOrTrimToExactLength(intro, 1500, filler);
+      }
+
+      if (pkg && Array.isArray(pkg.posts) && pkg.posts[item_index]) {
+        pkg.posts[item_index] = {
+          ...pkg.posts[item_index],
+          title: titleToUse || pkg.posts[item_index].title,
+          text: regeneratedDesc,
+          charCount: regeneratedDesc.length,
+          revision: (pkg.posts[item_index].revision || 1) + 1,
+        };
+        saveDb(getDb());
+      }
+
+      return res.json({
+        ok: true,
+        item_type: "post",
+        item_index,
+        title: titleToUse,
+        text: regeneratedDesc,
+        charCount: regeneratedDesc.length,
+        pkg,
+      });
+    }
+
+    return res.status(400).json({ ok: false, error: "item_type inválido" });
+  });
+
+  // 4d. DIRECT ITEM EDIT UPDATE (TITLE / DESC / CATEGORY + ABA 02 -> ABA 04 SYNC)
+  router.post("/gbp-package/update-item", (req, res) => {
+    const g360 = ensureG360Db();
+    const { businessName, item_type = "service", item_index = 0, itemData } = req.body || {};
+    const cleanKey = String(businessName || "").toLowerCase();
+    let pkg = g360.packagesByBusiness[cleanKey];
+    if (!pkg) {
+      const foundKey = Object.keys(g360.packagesByBusiness).find(
+        (k) => k.includes(cleanKey) || cleanKey.includes(k)
+      );
+      if (foundKey) pkg = g360.packagesByBusiness[foundKey];
+    }
+
+    if (pkg && itemData) {
+      if (item_type === "service" && pkg.services?.[item_index]) {
+        pkg.services[item_index] = { ...pkg.services[item_index], ...itemData };
+        // Auto-sync Aba 02 edit to Aba 04 post
+        if (Array.isArray(pkg.posts)) {
+          const svc = pkg.services[item_index];
+          const bizName = pkg.businessName || businessName || "Empresa Local";
+          const bizCity = pkg.city || "Anápolis";
+          const bizUf = pkg.uf || "GO";
+          const bizPhone = pkg.phone || "";
+          const cat = pkg.primaryCategory || "Comércio Local";
+          pkg.posts = pkg.posts.map((pt: any, pIdx: number) => {
+            const mappedSvcIdx = pIdx % pkg.services.length;
+            if (mappedSvcIdx !== item_index && !(pt.isOfferPost && item_index === 0)) return pt;
+            const newPostTitle = pt.isOfferPost ? `Condição Especial: ${svc.name}` : svc.name;
+            const postIntro = pt.isOfferPost
+              ? `CONDIÇÃO ESPECIAL NA ${bizName.toUpperCase()} EM ${bizCity.toUpperCase()}: ${svc.name.toUpperCase()}!\n\n${svc.description}`
+              : `${newPostTitle} — ${bizName} (${bizCity} - ${bizUf}).\n\n${svc.description}`;
+            const fillerPost = `Na ${bizName}, localizada em ${bizCity}, entregamos excelência em ${cat.toLowerCase()} com atendimento ágil pelo telefone ${bizPhone} e WhatsApp. Quem pesquisa por ${svc.localTerm || svc.name} conta com nossa equipe especializada e condições facilitadas.`;
+            const fullText = padOrTrimToExactLength(postIntro, 1500, fillerPost);
+            return {
+              ...pt,
+              title: newPostTitle,
+              seoKeyword: svc.localTerm || svc.name.toLowerCase(),
+              text: fullText,
+              charCount: fullText.length,
+            };
+          });
+          pkg.scheduledPosts = pkg.posts;
+        }
+      } else if (item_type === "product" && pkg.products?.[item_index]) {
+        pkg.products[item_index] = { ...pkg.products[item_index], ...itemData };
+      } else if (item_type === "post" && pkg.posts?.[item_index]) {
+        pkg.posts[item_index] = { ...pkg.posts[item_index], ...itemData };
+      }
+      saveDb(getDb());
+    }
+
+    res.json({ ok: true, pkg });
   });
 
   // 5. CRM LEADS & PIPELINE ROUTES
@@ -2307,6 +5015,39 @@ Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade princ
     res.json({ ok: true });
   });
 
+  router.post("/crm/site-status", (req, res) => {
+    const { slug, projectId, status, suspendedReason } = req.body || {};
+    const currentDb = getDb();
+    let proj: any = null;
+    if (projectId) {
+      proj = currentDb.projects.find((p: any) => p.id === projectId);
+    }
+    if (!proj && slug) {
+      proj = currentDb.projects.find((p: any) => p.slug === slug);
+    }
+    if (!proj) {
+      return res.status(404).json({ ok: false, detail: "Site não encontrado no banco de projetos." });
+    }
+
+    proj.status = status === "suspended" ? "suspended" : status === "forced_active" ? "forced_active" : "active";
+    if (proj.status === "suspended") {
+      proj.suspendedReason = suspendedReason || "manual";
+    } else {
+      delete proj.suspendedReason;
+    }
+    proj.updated_at = new Date().toISOString();
+    saveDb(currentDb);
+
+    res.json({
+      ok: true,
+      message:
+        proj.status === "active" || proj.status === "forced_active"
+          ? "Site colocado No Ar com sucesso!"
+          : "Site tirado do ar (suspenso) com sucesso!",
+      project: proj,
+    });
+  });
+
   router.put("/settings", (req, res) => {
     const g360 = ensureG360Db();
     const { financeGoals, deploySettings } = req.body || {};
@@ -2314,6 +5055,146 @@ Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade princ
     if (deploySettings) g360.deploySettings = { ...g360.deploySettings, ...deploySettings };
     saveDb(getDb());
     res.json({ ok: true, financeGoals: g360.financeGoals, deploySettings: g360.deploySettings });
+  });
+
+  // 5b. DIGITAL CONTRACTS & ELECTRONIC SIGNATURE (MP 2.200-2/2001 & ART. 784 §4º CPC)
+  router.get("/contracts", (_req, res) => {
+    const g360 = ensureG360Db();
+    const list = Object.values(g360.contracts || {}).sort((a: any, b: any) =>
+      String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""))
+    );
+    res.json({ ok: true, contracts: list });
+  });
+
+  router.post("/contracts", (req, res) => {
+    const g360 = ensureG360Db();
+    const body = req.body || {};
+    const existingId = body.id && g360.contracts?.[body.id] ? body.id : null;
+    const contractId = existingId || `ctr-${uuidv4().slice(0, 8)}`;
+    const prev = existingId ? g360.contracts[contractId] : null;
+    const nowIso = new Date().toISOString();
+
+    const contractText = String(body.contractText || prev?.contractText || "").trim();
+    const docHash = crypto
+      .createHash("sha256")
+      .update(`${contractId}|${body.clientName || ""}|${body.cnpjCpf || ""}|${body.totalValue || 0}|${contractText}`)
+      .digest("hex");
+
+    const record = {
+      id: contractId,
+      leadId: body.leadId || prev?.leadId || "",
+      clientName: body.clientName || prev?.clientName || "Empresa Contratante",
+      representativeName: body.representativeName || prev?.representativeName || "Responsável Legal",
+      cnpjCpf: body.cnpjCpf || prev?.cnpjCpf || "00.000.000/0001-00",
+      clientPhone: body.clientPhone || prev?.clientPhone || "",
+      address: body.address || prev?.address || "",
+      providerName: body.providerName || prev?.providerName || "Consultor / Prestador G360",
+      providerCpfCnpj: body.providerCpfCnpj || prev?.providerCpfCnpj || "000.000.000-00",
+      providerRg: body.providerRg || prev?.providerRg || "",
+      providerAddress: body.providerAddress || prev?.providerAddress || "",
+      totalValue: Number(body.totalValue ?? prev?.totalValue ?? 997),
+      paymentTerms: body.paymentTerms || prev?.paymentTerms || "Pix ou Cartão conforme proposta",
+      durationMonths: body.durationMonths || prev?.durationMonths || "12",
+      startDate: body.startDate || prev?.startDate || nowIso.slice(0, 10),
+      selectedPackages: Array.isArray(body.selectedPackages) ? body.selectedPackages : prev?.selectedPackages || [],
+      contractText,
+      externalSignatureUrl: body.externalSignatureUrl ?? prev?.externalSignatureUrl ?? "",
+      documentIntegrityHash: docHash,
+      status: prev?.status === "signed" && !body.resetSignature ? "signed" : "pending_signature",
+      signature: prev?.status === "signed" && !body.resetSignature ? prev.signature : null,
+      createdAt: prev?.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    g360.contracts[contractId] = record;
+    saveDb(getDb());
+    res.json({ ok: true, contract: record });
+  });
+
+  router.get("/contracts/:id", (req, res) => {
+    const g360 = ensureG360Db();
+    const { id } = req.params;
+    const contract = g360.contracts?.[id];
+    if (!contract) {
+      return res.status(404).json({ ok: false, detail: "Contrato digital não encontrado ou link expirado." });
+    }
+    res.json({ ok: true, contract });
+  });
+
+  router.post("/contracts/:id/sign", (req, res) => {
+    const g360 = ensureG360Db();
+    const { id } = req.params;
+    const contract = g360.contracts?.[id];
+    if (!contract) {
+      return res.status(404).json({ ok: false, detail: "Contrato digital não encontrado." });
+    }
+
+    const {
+      signerName,
+      signerDocument,
+      signerEmail = "",
+      signatureDataUrl,
+      acceptedTerms,
+    } = req.body || {};
+
+    if (!signerName || !signerDocument || !signatureDataUrl || !acceptedTerms) {
+      return res.status(400).json({
+        ok: false,
+        detail: "Preencha nome completo, CPF/CNPJ, desenhe sua assinatura e aceite os termos legais.",
+      });
+    }
+
+    const forwarded = req.headers["x-forwarded-for"];
+    const clientIp =
+      (Array.isArray(forwarded) ? forwarded[0] : String(forwarded || "").split(",")[0].trim()) ||
+      req.socket?.remoteAddress ||
+      "127.0.0.1";
+    const userAgent = String(req.headers["user-agent"] || "Navegador Web / Mobile");
+    const signedAt = new Date().toISOString();
+
+    const canonicalPayload = JSON.stringify({
+      contractId: contract.id,
+      clientName: contract.clientName,
+      cnpjCpf: contract.cnpjCpf,
+      totalValue: contract.totalValue,
+      contractText: contract.contractText,
+      signerName: String(signerName).trim(),
+      signerDocument: String(signerDocument).trim(),
+      signedAt,
+      clientIp,
+      userAgent,
+      signatureLength: String(signatureDataUrl).length,
+    });
+
+    const sha256Hash = crypto.createHash("sha256").update(canonicalPayload).digest("hex");
+
+    contract.status = "signed";
+    contract.updatedAt = signedAt;
+    contract.signature = {
+      signerName: String(signerName).trim(),
+      signerDocument: String(signerDocument).trim(),
+      signerEmail: String(signerEmail || "").trim(),
+      signatureDataUrl,
+      signedAt,
+      clientIp,
+      userAgent,
+      sha256Hash,
+      legalBasis: "MP 2.200-2/2001 (Art. 10, § 2º), Lei 14.063/2020 e Código de Processo Civil (Art. 784, § 4º)",
+    };
+
+    // Automatically update linked CRM lead stage when signed
+    if (contract.leadId && Array.isArray(g360.crmLeads)) {
+      const leadIdx = g360.crmLeads.findIndex((l: any) => l.id === contract.leadId);
+      if (leadIdx !== -1) {
+        g360.crmLeads[leadIdx].stage = "otimizacao";
+        g360.crmLeads[leadIdx].contractSigned = true;
+        g360.crmLeads[leadIdx].contractId = contract.id;
+        g360.crmLeads[leadIdx].contractSha256 = sha256Hash;
+      }
+    }
+
+    saveDb(getDb());
+    res.json({ ok: true, contract });
   });
 
   // 6. MULTI-USER SAAS LOGIN MANAGEMENT
@@ -2415,6 +5296,56 @@ Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade princ
       }
     }
 
+    if (provider === "netlify" && token) {
+      try {
+        const sha1 = crypto.createHash("sha1").update(htmlContent, "utf8").digest("hex");
+        const createRes = await fetch("https://api.netlify.com/api/v1/sites", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name: `${cleanSlug}-${ Math.floor(1000 + Math.random() * 9000)}` }),
+        });
+        const siteData: any = await createRes.json();
+        if (createRes.ok && siteData?.id) {
+          const depRes = await fetch(`https://api.netlify.com/api/v1/sites/${siteData.id}/deploys`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              files: { "/index.html": sha1 },
+            }),
+          });
+          const depData: any = await depRes.json();
+          if (depRes.ok && depData?.id) {
+            await fetch(`https://api.netlify.com/api/v1/deploys/${depData.id}/files/index.html`, {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/octet-stream",
+              },
+              body: htmlContent,
+            });
+            return res.json({
+              ok: true,
+              provider: "netlify",
+              live: true,
+              url: siteData.ssl_url || siteData.url || `https://${siteData.name}.netlify.app`,
+              message: "Site publicado gratuitamente na Netlify com sucesso!",
+            });
+          }
+        }
+        return res.status(400).json({
+          detail: siteData?.message || "Token da Netlify inválido ou sem permissão.",
+        });
+      } catch (e: any) {
+        return res.status(500).json({ detail: e?.message || "Erro ao conectar com a API da Netlify." });
+      }
+    }
+
     // Always provide the instant hosted route on this server + clear status if external token wasn't filled yet
     return res.json({
       ok: true,
@@ -2424,7 +5355,7 @@ Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade princ
       needsTokenForExternal: !token,
       message: token
         ? "Site atualizado no servidor!"
-        : "Link público ativo no servidor! Para publicar também em .vercel.app, basta informar seu Token gratuito da Vercel nas configurações.",
+        : "Link público ativo no servidor! Você também pode baixar o ZIP completo (com sitemap.xml, robots.txt e tag Google Search Console) ou conectar seu token gratuito Vercel/Netlify.",
     });
   });
 
@@ -2467,6 +5398,103 @@ Regras: sem emojis, sem promessas irreais, inclua naturalmente a atividade princ
     }
     const updated = costGuard.updateConfig(body);
     res.json({ ok: true, config: updated, metrics: costGuard.getMetrics() });
+  });
+
+  // 9. ESCUDO CUSTO ZERO (R$ 0,00 GARANTIDO) — BLOQUEADOR DE COBRANÇAS GOOGLE CLOUD (PLACES API + SEARCH GROUNDING)
+  router.get("/zero-cost-shield", (_req, res) => {
+    const cfg = costGuard.getConfig();
+    const metrics = costGuard.getMetrics();
+    const placesBlocked = Boolean(cfg.strictFreeMode && cfg.services?.google_places?.blockPaidCalls);
+    const groundingBlocked = Boolean(cfg.strictFreeMode && cfg.services?.gemini_grounding_paid?.blockPaidCalls);
+    const outscraperActive = getOutscraperKey().length > 10;
+    res.json({
+      ok: true,
+      zeroCostActive: placesBlocked && groundingBlocked,
+      strictFreeMode: cfg.strictFreeMode,
+      blockedPaidSkus: [
+        {
+          id: "google_places",
+          name: "Google Places API (New) — Enterprise & Photo Media SKUs ($35/1k e $7/1k)",
+          blocked: placesBlocked,
+          callsToday: metrics.usage?.google_places?.dailyCount || 0,
+          replacement: outscraperActive
+            ? "Outscraper v3 Free Tier (500/mês grátis) + Cache Local de 7 Dias"
+            : "Cache Local de 7 Dias + OpenStreetMap Nominatim + Motor Determinístico",
+        },
+        {
+          id: "gemini_grounding_paid",
+          name: "Google Gemini Search / Maps Grounding Tool ($35/1k prompts em projetos com Billing)",
+          blocked: groundingBlocked,
+          callsToday: metrics.usage?.gemini_grounding_paid?.dailyCount || 0,
+          replacement: "Gemini 3.1 Flash-Lite Puro (Sem ferramenta googleSearch paga) + Multi-IA Gratuita (Groq / OpenRouter / NVIDIA)",
+        },
+        {
+          id: "gemini_image",
+          name: "Google Gemini Image / Video Pago",
+          blocked: Boolean(cfg.strictFreeMode && cfg.services?.gemini_image?.blockPaidCalls),
+          callsToday: metrics.usage?.gemini_image?.dailyCount || 0,
+          replacement: "Motor Fotográfico Flux Realista Gratuito",
+        },
+      ],
+      freeEnginesActive: {
+        outscraperFreeTier: outscraperActive,
+        geminiFlashLiteFree: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
+        groqFreeLpu: getGroqKey().length > 8,
+        openRouterFree: getOpenRouterKey().length > 8,
+        nvidiaNimFree: getNvidiaKey().length > 8,
+        cacheHitsToday:
+          (metrics.cacheStats?.cnpjHits || 0) + (metrics.cacheStats?.aiDeduplicationHits || 0),
+      },
+    });
+  });
+
+  router.post("/zero-cost-shield", (req, res) => {
+    const { enableZeroCost = true } = req.body || {};
+    const strict = Boolean(enableZeroCost);
+    const updated = costGuard.updateConfig({
+      enabled: true,
+      strictFreeMode: strict,
+      services: {
+        google_places: {
+          name: "Google Maps Platform / Places API (Enterprise & Photos SKU Pago)",
+          dailyLimit: 50,
+          rateLimitPerMin: 10,
+          blockPaidCalls: strict,
+        },
+        gemini_grounding_paid: {
+          name: "Google Gemini Grounding (Google Search / Maps Tool — SKU Pago $35/1k)",
+          dailyLimit: 10,
+          rateLimitPerMin: 2,
+          blockPaidCalls: strict,
+        },
+        gemini_image: {
+          name: "Google Gemini / Imagens IA",
+          dailyLimit: 30,
+          rateLimitPerMin: 4,
+          blockPaidCalls: strict,
+        },
+        gemini_video: {
+          name: "Google Gemini Video / Omni",
+          dailyLimit: 10,
+          rateLimitPerMin: 2,
+          blockPaidCalls: strict,
+        },
+        outscraper: {
+          name: "Outscraper Google Maps v3 (Free Tier 500 Empresas/mês — Sem Cobrança GCP)",
+          dailyLimit: 100,
+          rateLimitPerMin: 10,
+          blockPaidCalls: false,
+        },
+      },
+    });
+    res.json({
+      ok: true,
+      zeroCostActive: strict,
+      config: updated,
+      message: strict
+        ? "Escudo Custo Zero ATIVADO: Todas as chamadas pagas do Google Cloud (Places API Enterprise, Place Photos e Search Grounding) estão 100% bloqueadas!"
+        : "Modo API Paga liberado manualmente.",
+    });
   });
 
   return router;

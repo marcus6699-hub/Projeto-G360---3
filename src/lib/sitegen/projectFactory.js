@@ -46,7 +46,9 @@ export function createProjectData(business, archetype, templateId = "") {
       : [slotHero, slotSobre, slotDest1, slotDest2, slotDest3, slotAmb].filter(Boolean);
 
   const destaqueSlots = [slotDest1, slotDest2, slotDest3, slotAmb];
-  const rawItems = Array.isArray(business?.items) ? business.items : [];
+  const rawItems = (Array.isArray(business?.items) ? business.items : []).filter(
+    (it) => it && !it.isPending && !String(it.name || "").includes("[PENDENTE]") && !String(it.description || "").includes("[PENDENTE]")
+  );
   const enrichedItems = rawItems.map((it, idx) => {
     const hasRealImg =
       it?.image && typeof it.image === "string" && !it.image.startsWith("data:image/svg+xml");

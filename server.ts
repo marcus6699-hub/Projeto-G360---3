@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality, ThinkingLevel } from "@google/genai";
 import { createG360Router } from "./src/server/g360Engine";
 import { costGuard } from "./src/server/costGuard.ts";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
@@ -1230,7 +1230,70 @@ app.get("/api/places/autocomplete", async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (q.length < 2) return res.json({ suggestions: [] });
 
-  // Try Real Google Places API (New) if key is configured and allowed by CostGuard
+  // 0. Check 7-day CostGuard Cache first (Zero API calls & instant!)
+  const cacheKey = `autocomplete::${q.toLowerCase()}`;
+  const cachedSuggestions = costGuard.getCachedBusinessSearch(cacheKey);
+  if (Array.isArray(cachedSuggestions) && cachedSuggestions.length > 0) {
+    return res.json({ suggestions: cachedSuggestions, cached: true });
+  }
+
+  // 1. Try Outscraper v3 Free Tier FIRST (Zero Google Cloud Billing + returns direct photo URLs!)
+  const outscraperLimit = costGuard.checkLimit("outscraper");
+  if (hasOutscraperKey() && outscraperLimit.allowed) {
+    try {
+      const outKey = getOutscraperKey();
+      const outUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(q)}&limit=6&language=pt&region=BR&async=false`;
+      const outRes = await fetch(outUrl, {
+        headers: { "X-API-KEY": outKey },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (outRes.ok) {
+        costGuard.recordCall("outscraper");
+        const outJson: any = await outRes.json();
+        const rows = Array.isArray(outJson?.data?.[0]) ? outJson.data[0] : [];
+        const suggestions = rows
+          .filter((r: any) => r && r.name)
+          .map((r: any) => {
+            const parsedLoc = parseCityUfFromAddress(r.full_address || r.address || "");
+            const pid = r.place_id || `outscraper::${encodeURIComponent(r.name)}`;
+            placesCache.set(pid, { _outscraper: r });
+            const directPhotos = [r.photo, r.street_view, r.logo].filter(Boolean);
+            return {
+              place_id: pid,
+              name: r.name,
+              category: r.type || (Array.isArray(r.subtypes) ? r.subtypes[0] : "Negócio Local"),
+              city: r.city || parsedLoc.city || "Brasil",
+              uf: r.state_code || r.state || parsedLoc.uf || "",
+              neighborhood: r.borough || parsedLoc.neighborhood || "",
+              address: r.full_address || r.address || `${r.city || parsedLoc.city} - ${r.state || parsedLoc.uf}`,
+              phone: r.phone || "",
+              website: r.site || r.website || "",
+              bio: r.description || r.about?.summary || "",
+              verified: Boolean(r.verified),
+              lat: Number(r.latitude) || undefined,
+              lng: Number(r.longitude) || undefined,
+              rating: Number(r.rating) || 4.8,
+              rating_count: Number(r.reviews) || 0,
+              photo:
+                r.photo ||
+                r.street_view ||
+                r.logo ||
+                svgBanner(r.name, r.type || "Negócio Local", "#0F172A", "#1E3A8A", "#38BDF8", r.city || "Brasil"),
+              photos: directPhotos,
+              photos_count: Number(r.photos_count) || directPhotos.length || 1,
+            };
+          });
+        if (suggestions.length > 0) {
+          costGuard.setCachedBusinessSearch(cacheKey, suggestions);
+          return res.json({ suggestions });
+        }
+      }
+    } catch {
+      // Fallback to next source
+    }
+  }
+
+  // 2. Try Real Google Places API (New) ONLY if unlocked in CostGuard (blocked by default in Zero-Cost Mode to prevent GCP billing)
   const placesLimit = costGuard.checkLimit("google_places");
   if (hasPlacesKey() && placesLimit.allowed) {
     try {
@@ -1242,7 +1305,7 @@ app.get("/api/places/autocomplete", async (req, res) => {
           "X-Goog-Api-Key": apiKey,
           "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
           "X-Goog-FieldMask":
-            "places.id,places.displayName,places.primaryTypeDisplayName,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.regularOpeningHours,places.location,places.websiteUri,places.reviews,places.photos",
+            "places.id,places.displayName,places.primaryTypeDisplayName,places.types,places.editorialSummary,places.googleMapsUri,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.regularOpeningHours,places.location,places.websiteUri,places.reviews,places.photos",
         },
         body: JSON.stringify({
           textQuery: q,
@@ -1259,9 +1322,12 @@ app.get("/api/places/autocomplete", async (req, res) => {
           }
           const photoRef = p.photos?.[0]?.name;
           const allPhotos = (p.photos || [])
-            .slice(0, 8)
+            .slice(0, 10)
             .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1400`);
           const parsedLoc = parseCityUfFromAddress(p.formattedAddress || "");
+          const weekdayHours = Array.isArray(p.regularOpeningHours?.weekdayDescriptions)
+            ? p.regularOpeningHours.weekdayDescriptions
+            : undefined;
           return {
             place_id: p.id,
             name: p.displayName?.text || "Empresa",
@@ -1272,11 +1338,16 @@ app.get("/api/places/autocomplete", async (req, res) => {
             address: p.formattedAddress || `${parsedLoc.city} - ${parsedLoc.uf}`,
             phone: p.nationalPhoneNumber || "",
             website: p.websiteUri || "",
+            bio: p.editorialSummary?.text || "",
+            hours: weekdayHours,
+            lat: p.location?.latitude,
+            lng: p.location?.longitude,
             rating: p.rating || 5.0,
             rating_count: p.userRatingCount || 0,
             photo: photoRef
               ? `/api/places/photo?name=${encodeURIComponent(photoRef)}&max_width_px=600`
-              : svgBanner(
+              : allPhotos[0] ||
+                svgBanner(
                   p.displayName?.text || "Empresa",
                   p.primaryTypeDisplayName?.text || "Negócio Local",
                   "#0F172A",
@@ -1285,16 +1356,20 @@ app.get("/api/places/autocomplete", async (req, res) => {
                   parsedLoc.city || "Brasil"
                 ),
             photos: allPhotos,
+            photos_count: Array.isArray(p.photos) ? p.photos.length : 0,
           };
         });
-        if (suggestions.length > 0) return res.json({ suggestions });
+        if (suggestions.length > 0) {
+          costGuard.setCachedBusinessSearch(cacheKey, suggestions);
+          return res.json({ suggestions });
+        }
       }
     } catch {
-      // Silent fallback to local demo search
+      // Fallback to Demo
     }
   }
 
-  // Smart Demo Search Fallback
+  // 3. Smart Demo Search Fallback
   const norm = (s: string) =>
     s
       .toLowerCase()
@@ -1306,7 +1381,7 @@ app.get("/api/places/autocomplete", async (req, res) => {
     return terms.every((t) => hay.includes(t));
   });
   if (matches.length === 0) {
-    matches = DEMO_BUSINESSES;
+    matches = DEMO_BUSINESSES.slice(0, 4);
   }
   const suggestions = matches.map((b) => ({
     place_id: b.place_id,
@@ -1322,12 +1397,13 @@ app.get("/api/places/autocomplete", async (req, res) => {
     photo: b.photos[0],
   }));
 
-  // If the user typed a specific business name that doesn't exactly match a preset, prepend it as an instant selectable company!
   const exactExists = suggestions.some((s) => norm(s.name) === norm(q));
   if (!exactExists && q.length >= 3) {
     const cleanQ = q.replace(/^https?:\/\/[^\s]+/i, "Link Google Maps").trim() || q;
     const guessedCat = /moveis|planejad|marcenar/i.test(cleanQ)
       ? "Fornecedor de móveis planejados"
+      : /ferragist|ferragem|hidraulic|materiais de constru/i.test(cleanQ)
+      ? "Ferragista & Materiais de Construção"
       : /lavajat|lava-jat|lava jato|estetica automot/i.test(cleanQ)
       ? "Lava-Jato & Estética Automotiva"
       : /ateli|costur|reparo|alfaiat/i.test(cleanQ)
@@ -1342,21 +1418,26 @@ app.get("/api/places/autocomplete", async (req, res) => {
       ? "Sorveteria & Açaí"
       : /pet\b|banho e tosa/i.test(cleanQ)
       ? "Pet Shop"
-      : /bateria|oficina|auto/i.test(cleanQ)
-      ? "Auto Elétrica & Baterias"
-      : "Pesquisa em Tempo Real no Google Maps";
-    suggestions.unshift({
+      : /bateria|oficina|auto|mecan/i.test(cleanQ)
+      ? "Oficina Mecânica & Auto Elétrica"
+      : "Empresa Local";
+    const cityGuess = /anapolis|anápolis/i.test(cleanQ)
+      ? "Anápolis"
+      : /goiania|goiânia/i.test(cleanQ)
+      ? "Goiânia"
+      : "Anápolis";
+    suggestions.push({
       place_id: `custom::${encodeURIComponent(q)}`,
       name: cleanQ,
       category: guessedCat,
-      city: /anapolis|anápolis/i.test(cleanQ) ? "Anápolis" : /goiania|goiânia/i.test(cleanQ) ? "Goiânia" : "Google Maps Live",
-      uf: /anapolis|anápolis|goiania|goiânia/i.test(cleanQ) ? "GO" : "BR",
-      neighborhood: "",
-      address: `${cleanQ} · Busca em Tempo Real`,
+      city: cityGuess,
+      uf: "GO",
+      neighborhood: "Centro",
+      address: `${cleanQ} — ${cityGuess}, GO`,
       rating: 4.8,
       rating_count: 45,
       verified: false,
-      photo: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=600&q=80",
+      photo: svgBanner(cleanQ, guessedCat, "#1E1B4B", "#4C1D95", "#A855F7", cityGuess),
     });
   }
 
@@ -1711,59 +1792,98 @@ function buildSmartNicheProfile(name: string, category: string, city: string, go
 
 app.get("/api/places/details/:placeId", async (req, res) => {
   const { placeId } = req.params;
+  let placePayload: any = placesCache.get(placeId) || null;
+
+  // If custom:: query was submitted, first attempt to resolve via live Google Places API searchText!
   if (placeId.startsWith("custom::")) {
     const rawName = decodeURIComponent(placeId.replace(/^custom::/, "")).trim() || "Empresa Local";
-    const guessedCat = /moveis|planejad|marcenar/i.test(rawName)
-      ? "Fornecedor de móveis planejados"
-      : /gas|botijao|ultragaz/i.test(rawName)
-      ? "Revenda de Gás e Água Mineral"
-      : /farmac|drogari/i.test(rawName)
-      ? "Farmácia & Drogaria"
-      : /clinic|odonto|dentist|medic|dr\b/i.test(rawName)
-      ? "Clínica Médica & Odontologia"
-      : /sorvet|acai/i.test(rawName)
-      ? "Sorveteria & Gelateria"
-      : "Comércio e Serviços Locais";
-    const profile = buildSmartNicheProfile(rawName, guessedCat, "Anápolis", []);
-    return res.json({
-      place_id: placeId,
-      source: "custom",
-      name: rawName,
-      category: profile.categoryLabel,
-      segment: profile.segment,
-      recommended_template: profile.recommended_template,
-      city: "Anápolis",
-      uf: "GO",
-      neighborhood: "Centro",
-      address: "Anápolis - GO",
-      phone: "(62) 99113-8004",
-      whatsapp: "5562991138004",
-      rating: 4.6,
-      rating_count: 19,
-      open_now: true,
-      verified: false,
-      hours_text: "08:00 – 18:00",
-      hours: DEMO_BUSINESSES[0].hours,
-      lat: -16.3285,
-      lng: -48.9534,
-      website: "",
-      price_level: "$$",
-      business_status: "OPERATIONAL",
-      features: profile.features,
-      photos: profile.photos,
-      items: profile.items,
-      reviews: [
-        {
-          author: "Cliente Verificado",
-          rating: 5,
-          time: "2 semanas atrás",
-          text: `Ótimo atendimento na ${rawName}. Recomendo pela qualidade e agilidade!`,
-        },
-      ],
-      faqs: profile.faqs,
-      bio: profile.bio,
-      google_maps_uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${rawName} Anápolis GO`)}`,
-    });
+    const placesDetailLimit = costGuard.checkLimit("google_places");
+    if (hasPlacesKey() && placesDetailLimit.allowed) {
+      try {
+        const apiKey = getPlacesApiKey();
+        const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": apiKey,
+            "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
+            "X-Goog-FieldMask":
+              "places.id,places.displayName,places.primaryTypeDisplayName,places.types,places.editorialSummary,places.googleMapsUri,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.regularOpeningHours,places.location,places.websiteUri,places.reviews,places.photos",
+          },
+          body: JSON.stringify({
+            textQuery: rawName,
+            languageCode: "pt-BR",
+            maxResultCount: 1,
+          }),
+        });
+        if (gRes.ok) {
+          costGuard.recordCall("google_places");
+          const gData: any = await gRes.json();
+          if (gData.places?.[0]) {
+            placePayload = gData.places[0];
+            placesCache.set(placePayload.id, placePayload);
+          }
+        }
+      } catch {
+        // continue to fallback
+      }
+    }
+
+    if (!placePayload) {
+      const guessedCat = /moveis|planejad|marcenar/i.test(rawName)
+        ? "Fornecedor de móveis planejados"
+        : /ferragist|ferragem|hidraulic|constru/i.test(rawName)
+        ? "Ferragista & Materiais de Construção"
+        : /gas|botijao|ultragaz/i.test(rawName)
+        ? "Revenda de Gás e Água Mineral"
+        : /farmac|drogari/i.test(rawName)
+        ? "Farmácia & Drogaria"
+        : /clinic|odonto|dentist|medic|dr\b/i.test(rawName)
+        ? "Clínica Médica & Odontologia"
+        : /sorvet|acai/i.test(rawName)
+        ? "Sorveteria & Gelateria"
+        : "Comércio e Serviços Locais";
+      const profile = buildSmartNicheProfile(rawName, guessedCat, "Anápolis", []);
+      return res.json({
+        place_id: placeId,
+        source: "custom",
+        name: rawName,
+        category: profile.categoryLabel,
+        segment: profile.segment,
+        recommended_template: profile.recommended_template,
+        city: "Anápolis",
+        uf: "GO",
+        neighborhood: "Centro",
+        address: "Anápolis - GO",
+        phone: "(62) 99113-8004",
+        whatsapp: "5562991138004",
+        rating: 4.6,
+        rating_count: 19,
+        open_now: true,
+        verified: false,
+        hours_text: "08:00 – 18:00",
+        hours: DEMO_BUSINESSES[0].hours,
+        lat: -16.3285,
+        lng: -48.9534,
+        website: "",
+        price_level: "$$",
+        business_status: "OPERATIONAL",
+        features: profile.features,
+        photos: profile.photos,
+        items: profile.items,
+        reviews: [
+          {
+            author: "Cliente Verificado",
+            rating: 5,
+            time: "2 semanas atrás",
+            text: `Ótimo atendimento na ${rawName}. Recomendo pela qualidade e agilidade!`,
+          },
+        ],
+        faqs: profile.faqs,
+        bio: profile.bio,
+        google_maps_uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${rawName} Anápolis GO`)}`,
+      });
+    }
   }
 
   const demoFound = DEMO_BUSINESSES.find((b) => b.place_id === placeId);
@@ -1775,8 +1895,6 @@ app.get("/api/places/details/:placeId", async (req, res) => {
     });
   }
 
-  let placePayload: any = placesCache.get(placeId) || null;
-
   const placesDetailLimit = costGuard.checkLimit("google_places");
   if (hasPlacesKey() && placesDetailLimit.allowed && !placePayload) {
     try {
@@ -1786,7 +1904,7 @@ app.get("/api/places/details/:placeId", async (req, res) => {
           "X-Goog-Api-Key": apiKey,
           "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
           "X-Goog-FieldMask":
-            "id,displayName,primaryTypeDisplayName,formattedAddress,nationalPhoneNumber,rating,userRatingCount,regularOpeningHours,location,websiteUri,reviews,photos",
+            "id,displayName,primaryTypeDisplayName,types,editorialSummary,googleMapsUri,formattedAddress,nationalPhoneNumber,rating,userRatingCount,regularOpeningHours,location,websiteUri,reviews,photos",
         },
       });
       if (gRes.ok) {
@@ -1806,27 +1924,30 @@ app.get("/api/places/details/:placeId", async (req, res) => {
     const bizName = p.displayName?.text || "Empresa Verificada";
     const rawCategory = p.primaryTypeDisplayName?.text || "Negócio Local";
     const { city, uf, neighborhood } = parseCityUfFromAddress(p.formattedAddress || "");
-    const phone = p.nationalPhoneNumber || "(62) 99999-9999";
-    const whatsapp = "55" + phone.replace(/\D/g, "");
+    const phone = p.nationalPhoneNumber || null;
+    const whatsapp = phone ? "55" + phone.replace(/\D/g, "") : "";
     const photos = (p.photos || [])
-      .slice(0, 8)
+      .slice(0, 10)
       .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1400`);
     const reviews = (p.reviews || []).map((r: any) => ({
       author: r.authorAttribution?.displayName || "Cliente",
       rating: r.rating || 5,
       time: r.relativePublishTimeDescription || "recentemente",
-      text: r.text?.text || "Excelente atendimento e qualidade impecável!",
+      text: r.text?.text || "",
     }));
 
     const profile = buildSmartNicheProfile(bizName, rawCategory, city, photos);
-    const weekdayHours: string[] = p.regularOpeningHours?.weekdayDescriptions || DEMO_BUSINESSES[0].hours;
-    const firstHour = weekdayHours[0] ? weekdayHours[0].split(": ").slice(1).join(": ") : "08:00 – 18:00";
+    const weekdayHours: string[] | null = Array.isArray(p.regularOpeningHours?.weekdayDescriptions)
+      ? p.regularOpeningHours.weekdayDescriptions
+      : null;
+    const firstHour = weekdayHours?.[0] ? weekdayHours[0].split(": ").slice(1).join(": ") : "";
 
     return res.json({
       place_id: p.id || placeId,
-      source: "google",
+      source: "google_places",
       name: bizName,
-      category: profile.categoryLabel,
+      category: p.primaryTypeDisplayName?.text || profile.categoryLabel,
+      categories: Array.isArray(p.types) ? p.types : null,
       segment: profile.segment,
       recommended_template: profile.recommended_template,
       city,
@@ -1835,9 +1956,9 @@ app.get("/api/places/details/:placeId", async (req, res) => {
       address: p.formattedAddress || `${city} - ${uf}`,
       phone,
       whatsapp,
-      rating: p.rating || 5.0,
-      rating_count: p.userRatingCount || reviews.length || 45,
-      open_now: p.regularOpeningHours?.openNow ?? true,
+      rating: p.rating !== undefined && p.rating !== null ? Number(p.rating) : null,
+      rating_count: p.userRatingCount !== undefined && p.userRatingCount !== null ? Number(p.userRatingCount) : null,
+      open_now: p.regularOpeningHours?.openNow ?? null,
       hours_text: firstHour,
       hours: weekdayHours,
       lat: p.location?.latitude,
@@ -1847,38 +1968,57 @@ app.get("/api/places/details/:placeId", async (req, res) => {
       business_status: "OPERATIONAL",
       features: profile.features,
       photos: photos.length > 0 ? photos : profile.photos,
+      photos_count: photos.length > 0 ? photos.length : undefined,
       items: profile.items,
-      reviews: reviews.length
-        ? reviews
-        : [
-            {
-              author: "Cliente Verificado",
-              rating: 5,
-              time: "recentemente",
-              text: `Excelente atendimento na ${bizName}! Muito capricho, pontualidade e preço justo. Recomendo!`,
-            },
-          ],
+      reviews,
       faqs: profile.faqs,
-      bio: profile.bio,
-      google_maps_uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${bizName} ${p.formattedAddress || city}`)}`,
+      bio: p.editorialSummary?.text || "",
+      google_maps_uri:
+        p.googleMapsUri ||
+        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${bizName} ${p.formattedAddress || city}`)}`,
     });
   }
 
   res.json(DEMO_BUSINESSES[0]);
 });
 
-app.get("/api/places/photo", (req, res) => {
+const photoUriCache = new Map<string, string>();
+
+app.get("/api/places/photo", async (req, res) => {
   const name = String(req.query.name || "");
-  const maxWidth = String(req.query.max_width_px || "1200");
-  const photoLimit = costGuard.checkLimit("google_places");
-  if (hasPlacesKey() && photoLimit.allowed && name.startsWith("places/")) {
-    costGuard.recordCall("google_places");
-    const url = `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${encodeURIComponent(maxWidth)}&key=${encodeURIComponent(
-      getPlacesApiKey()
-    )}&solution_id=gmp_mcp_codeassist_v1_aistudio`;
-    return res.redirect(url);
+  const maxWidth = String(req.query.max_width_px || "900");
+  const cacheKey = `${name}::${maxWidth}`;
+
+  if (photoUriCache.has(cacheKey)) {
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.redirect(photoUriCache.get(cacheKey)!);
   }
-  const svg = svgBanner("Foto Ilustrativa", "Imagem ilustrativa do estabelecimento", "#0F172A", "#1E3A8A", "#F3C94D", "Google Meu Negócio");
+
+  if (hasPlacesKey() && name.startsWith("places/")) {
+    try {
+      const apiKey = getPlacesApiKey();
+      const metaUrl = `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${encodeURIComponent(maxWidth)}&skipHttpRedirect=true&key=${encodeURIComponent(apiKey)}`;
+      const mediaRes = await fetch(metaUrl, {
+        headers: {
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-Maps-Solution-ID": "gmp_mcp_codeassist_v1_aistudio",
+        },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (mediaRes.ok) {
+        const data: any = await mediaRes.json();
+        if (data?.photoUri) {
+          photoUriCache.set(cacheKey, data.photoUri);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.redirect(data.photoUri);
+        }
+      }
+    } catch (err) {
+      console.warn("Places photo resolution fallback:", err);
+    }
+  }
+
+  const svg = svgBanner("Foto do Estabelecimento", "Imagem ilustrativa do negócio local", "#0F172A", "#1E3A8A", "#F3C94D", "Google Meu Negócio");
   const rawSvg = decodeURIComponent(svg.replace("data:image/svg+xml;utf8,", ""));
   res.setHeader("Content-Type", "image/svg+xml");
   res.send(rawSvg);
@@ -1929,12 +2069,12 @@ Regras obrigatórias:
       });
       const aiPromise = (async () => {
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-3.1-flash-lite",
           contents: prompt,
         });
         return response.text?.trim() || "";
       })();
-      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI timeout")), 3500));
+      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI timeout")), 7000));
       const generated = await Promise.race([aiPromise, timeoutPromise]);
       if (generated) {
         costGuard.recordUsage("gemini_text");
@@ -1974,7 +2114,7 @@ Regras obrigatórias:
   res.end();
 });
 
-// 3b. GOOGLE MAPS GROUNDING (gemini-2.5-flash + googleMaps tool + Real Places API)
+// 3b. GOOGLE MAPS GROUNDING (gemini-3.8-flash + googleMaps tool + Real Places API)
 app.post("/api/ai/maps-grounding", async (req, res) => {
   const { query, businessName, city, category, lat, lng } = req.body || {};
   const cleanQuery = String(query || "").trim();
@@ -2010,14 +2150,17 @@ app.post("/api/ai/maps-grounding", async (req, res) => {
             }
           : undefined;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: searchPrompt,
-        config: {
-          tools: [{ googleMaps: {} }],
-          ...(toolConfig ? { toolConfig } : {}),
-        },
-      });
+      const response: any = await Promise.race([
+        ai.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents: searchPrompt,
+          config: {
+            tools: [{ googleMaps: {} }],
+            ...(toolConfig ? { toolConfig } : {}),
+          },
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Maps Grounding timeout")), 7000)),
+      ]);
 
       const text = response.text || "";
       const chunks: any[] = (response.candidates?.[0] as any)?.groundingMetadata?.groundingChunks || [];
@@ -2078,7 +2221,7 @@ app.post("/api/ai/maps-grounding", async (req, res) => {
   });
 });
 
-// 3c. GOOGLE SEARCH GROUNDING (gemini-2.5-flash + googleSearch tool)
+// 3c. GOOGLE SEARCH GROUNDING (gemini-3.8-flash + googleSearch tool)
 app.post("/api/ai/search-grounding", async (req, res) => {
   const { query, businessName, city, category } = req.body || {};
   const cleanQuery = String(query || "").trim();
@@ -2104,13 +2247,16 @@ Traga:
   const ai = searchLimit.allowed ? getGeminiClient() : null;
   if (ai) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
+      const response: any = await Promise.race([
+        ai.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Search Grounding timeout")), 7000)),
+      ]);
 
       const text = response.text || "";
       const chunks: any[] = (response.candidates?.[0] as any)?.groundingMetadata?.groundingChunks || [];
@@ -2197,45 +2343,48 @@ app.post("/api/ai/generate-kit", async (req, res) => {
   const ai = kitLimit.allowed ? getGeminiClient() : null;
   if (ai) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Gere um kit de conteúdo persuasivo em português do Brasil para o site da empresa "${bName}" do ramo "${bCat}" localizada em "${bCity}" (arquétipo: ${segment || "produtos"}).
-Inclua um título principal de impacto, subtítulo, 3 itens de catálogo/serviços com preços realistas em R$, e 3 perguntas frequentes (FAQ).`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              heroTitle: { type: Type.STRING },
-              heroAccent: { type: Type.STRING },
-              heroSubtitle: { type: Type.STRING },
-              items: {
-                type: Type.ARRAY,
+      const response: any = await Promise.race([
+        ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: `Gere um kit de conteúdo persuasivo em português do Brasil para o site da empresa "${bName}" do ramo "${bCat}" localizada em "${bCity}" (arquétipo: ${segment || "produtos"}).
+Inclua um título principal de impacto, subtítulo, 4 itens de catálogo/serviços com preços realistas em R$, e 3 perguntas frequentes (FAQ).`,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                heroTitle: { type: Type.STRING },
+                heroAccent: { type: Type.STRING },
+                heroSubtitle: { type: Type.STRING },
                 items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    price: { type: Type.STRING },
-                    category: { type: Type.STRING },
-                    badge: { type: Type.STRING },
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      price: { type: Type.STRING },
+                      category: { type: Type.STRING },
+                      badge: { type: Type.STRING },
+                    },
                   },
                 },
-              },
-              faqs: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    q: { type: Type.STRING },
-                    a: { type: Type.STRING },
+                faqs: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      q: { type: Type.STRING },
+                      a: { type: Type.STRING },
+                    },
                   },
                 },
               },
             },
           },
-        },
-      });
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Kit AI timeout")), 8000)),
+      ]);
 
       const parsed = JSON.parse((response.text || "{}").trim());
       if (parsed && parsed.heroTitle) {
@@ -2246,7 +2395,7 @@ Inclua um título principal de impacto, subtítulo, 3 itens de catálogo/serviç
         }));
         return res.json({
           ok: true,
-          source: "gemini-2.5-flash",
+          source: "gemini-3.1-flash-lite",
           ...parsed,
           items: itemsWithImages,
         });
@@ -2492,7 +2641,7 @@ app.post("/api/ai/video", async (req, res) => {
   if (ai) {
     try {
       const copyRes = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: `Crie uma legenda curta de impacto (máximo 55 caracteres) e um selo curto (máximo 20 caracteres) para um vídeo promocional da empresa "${businessName || "Empresa Local"}" baseado no comando: "${motionPrompt}". Responda em JSON.`,
         config: {
           responseMimeType: "application/json",
@@ -2572,9 +2721,10 @@ app.post("/api/ai/clone-site", async (req, res) => {
   if (ai) {
     try {
       const snippet = fetchedHtml ? fetchedHtml.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").slice(0, 12000) : "";
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: `Analise o site de referência (${targetUrl || "HTML enviado"}) e extraia uma réplica fiel em JSON para nosso construtor de sites.
+      const response: any = await Promise.race([
+        ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: `Analise o site de referência (${targetUrl || "HTML enviado"}) e extraia uma réplica fiel em JSON para nosso construtor de sites.
 Título detectado: "${extractedTitle}"
 H1 detectado: "${extractedH1}"
 Descrição detectada: "${extractedDesc}"
@@ -2592,47 +2742,49 @@ Retorne um JSON com:
 - accentColor (cor hex de destaque detectada, ex: "#2563EB")
 - items (lista de 4 produtos/serviços/diferenciais do site com name, description, price, category, badge)
 - faqs (3 perguntas e respostas baseadas no site com q, a)`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              category: { type: Type.STRING },
-              segment: { type: Type.STRING },
-              city: { type: Type.STRING },
-              heroTitle: { type: Type.STRING },
-              heroAccent: { type: Type.STRING },
-              bio: { type: Type.STRING },
-              primaryColor: { type: Type.STRING },
-              accentColor: { type: Type.STRING },
-              items: {
-                type: Type.ARRAY,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                category: { type: Type.STRING },
+                segment: { type: Type.STRING },
+                city: { type: Type.STRING },
+                heroTitle: { type: Type.STRING },
+                heroAccent: { type: Type.STRING },
+                bio: { type: Type.STRING },
+                primaryColor: { type: Type.STRING },
+                accentColor: { type: Type.STRING },
                 items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    price: { type: Type.STRING },
-                    category: { type: Type.STRING },
-                    badge: { type: Type.STRING },
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      price: { type: Type.STRING },
+                      category: { type: Type.STRING },
+                      badge: { type: Type.STRING },
+                    },
                   },
                 },
-              },
-              faqs: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    q: { type: Type.STRING },
-                    a: { type: Type.STRING },
+                faqs: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      q: { type: Type.STRING },
+                      a: { type: Type.STRING },
+                    },
                   },
                 },
               },
             },
           },
-        },
-      });
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Clone AI timeout")), 8000)),
+      ]);
 
       const cloned = JSON.parse((response.text || "{}").trim());
       if (cloned && cloned.name) {
@@ -2715,7 +2867,7 @@ Retorne um JSON com:
   });
 });
 
-// 3h. FREE AUDIO TRANSCRIPTION (gemini-2.5-flash)
+// 3h. FREE AUDIO TRANSCRIPTION (gemini-3.8-flash)
 app.post("/api/ai/transcribe", async (req, res) => {
   const { audioBase64, mimeType = "audio/webm", contextHint = "", businessName = "" } = req.body || {};
   const cleanB64 = String(audioBase64 || "").replace(/^data:[^;]+;base64,/, "").trim();
@@ -2724,7 +2876,7 @@ app.post("/api/ai/transcribe", async (req, res) => {
   if (ai && cleanB64) {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: {
           parts: [
             {
@@ -2746,7 +2898,7 @@ app.post("/api/ai/transcribe", async (req, res) => {
       if (transcript) {
         return res.json({
           ok: true,
-          source: "gemini-2.5-flash",
+          source: "gemini-3.8-flash",
           transcript,
         });
       }
@@ -2770,7 +2922,7 @@ app.post("/api/ai/transcribe", async (req, res) => {
   });
 });
 
-// 3i. FREE MULTI-TURN GEMINI CHATBOT (gemini-2.5-flash + Search/Maps Grounding)
+// 3i. FREE MULTI-TURN GEMINI CHATBOT (gemini-3.1-flash-lite / gemini-3.8-flash + Search/Maps Grounding)
 app.post("/api/ai/chat", async (req, res) => {
   const {
     message,
@@ -2787,7 +2939,7 @@ app.post("/api/ai/chat", async (req, res) => {
     return res.status(400).json({ ok: false, detail: "Mensagem vazia" });
   }
 
-  const chosenModel = "gemini-2.5-flash";
+  const chosenModel = useSearch || useMaps ? "gemini-3.8-flash" : "gemini-3.1-flash-lite";
 
   const bizSummary = businessContext?.name
     ? `Empresa ativa em análise: ${businessContext.name} (${businessContext.category || "Negócio Local"} em ${
@@ -2826,18 +2978,22 @@ app.post("/api/ai/chat", async (req, res) => {
         parts: [{ text: userMsg }],
       });
 
+      const paidGroundingOk = costGuard.checkLimit("gemini_grounding_paid").allowed;
       const tools: any[] = [];
-      if (useSearch) tools.push({ googleSearch: {} });
-      if (useMaps) tools.push({ googleMaps: {} });
+      if (paidGroundingOk && useSearch) tools.push({ googleSearch: {} });
+      if (paidGroundingOk && useMaps) tools.push({ googleMaps: {} });
 
-      const response = await ai.models.generateContent({
-        model: chosenModel,
-        contents,
-        config: {
-          systemInstruction,
-          ...(tools.length > 0 ? { tools } : {}),
-        },
-      });
+      const response: any = await Promise.race([
+        ai.models.generateContent({
+          model: paidGroundingOk ? chosenModel : "gemini-3.1-flash-lite",
+          contents,
+          config: {
+            systemInstruction,
+            ...(tools.length > 0 ? { tools } : {}),
+          },
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Chat AI timeout")), 8000)),
+      ]);
 
       const replyText = (response.text || "").trim();
       const chunks: any[] =
@@ -2926,7 +3082,7 @@ app.post("/api/ai/voice-turn", async (req, res) => {
   if (!userTranscript && ai && cleanB64) {
     try {
       const trRes = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: {
           parts: [
             { inlineData: { mimeType: String(mimeType || "audio/webm"), data: cleanB64 } },
@@ -2954,7 +3110,7 @@ app.post("/api/ai/voice-turn", async (req, res) => {
   if (ai) {
     try {
       const chatRes = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: userTranscript,
         config: {
           systemInstruction:
@@ -2977,7 +3133,7 @@ app.post("/api/ai/voice-turn", async (req, res) => {
   if (ai) {
     try {
       const ttsRes = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
+        model: "gemini-3.8-flash-tts",
         contents: [{ parts: [{ text: spokenReply }] }],
         config: {
           responseModalities: [Modality.AUDIO],
@@ -3027,18 +3183,17 @@ app.get("/api/settings/ai", (_req, res) => {
     groq_active: groqActive,
     firebase_active: true,
     models: {
-      gemini: ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.5-transcribe"],
+      gemini: ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"],
       nvidia: [
-        "meta/llama-3.3-70b-instruct",
-        "deepseek-ai/deepseek-r1",
-        "qwen/qwen2.5-72b-instruct",
+        "deepseek-ai/deepseek-v4.1-flash",
+        "mistralai/mistral-large-4-1t-a52b",
+        "nv-mistralai/mistral-nemo-12b-instruct",
       ],
       openrouter: [
-        "google/gemini-2.0-flash-exp:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "deepseek/deepseek-r1:free",
+        "openrouter/auto",
+        "deepseek/deepseek-v4.1-flash-1017",
       ],
-      groq: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
+      groq: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
       emergent: ["gemini-3.8-flash", "gemini-3.1-flash-lite"],
       openai: ["gemini-3.8-flash"],
       anthropic: ["gemini-3.8-flash"],
@@ -3103,12 +3258,30 @@ app.put("/api/projects/:id", (req, res) => {
     ...current,
     ...(req.body.name !== undefined ? { name: req.body.name } : {}),
     ...(req.body.status !== undefined ? { status: req.body.status } : {}),
+    ...(req.body.suspendedReason !== undefined ? { suspendedReason: req.body.suspendedReason } : {}),
     ...(req.body.data !== undefined ? { data: req.body.data } : {}),
     updated_at: new Date().toISOString(),
   };
   db.projects[idx] = updated;
   saveDb(db);
   res.json(updated);
+});
+
+app.post("/api/projects/:id/status", (req, res) => {
+  const { id } = req.params;
+  const { status, suspendedReason } = req.body || {};
+  const proj = db.projects.find((p) => p.id === id || p.slug === id);
+  if (!proj) return res.status(404).json({ detail: "Projeto não encontrado" });
+
+  proj.status = status === "suspended" ? "suspended" : status === "forced_active" ? "forced_active" : "active";
+  if (proj.status === "suspended") {
+    (proj as any).suspendedReason = suspendedReason || "manual";
+  } else {
+    delete (proj as any).suspendedReason;
+  }
+  proj.updated_at = new Date().toISOString();
+  saveDb(db);
+  res.json({ ok: true, project: proj });
 });
 
 app.delete("/api/projects/:id", (req, res) => {
@@ -3151,6 +3324,45 @@ app.get("/api/public/site/:slug", (req, res) => {
   const { slug } = req.params;
   const proj = db.projects.find((p) => p.slug === slug);
   if (!proj) return res.status(404).json({ detail: "Site não encontrado" });
+
+  // 1. Explicit manual suspension
+  if (proj.status === "suspended") {
+    return res.json({
+      ...proj,
+      status: "suspended",
+      suspendedReason: (proj as any).suspendedReason || "manual",
+    });
+  }
+
+  // 2. Automatic suspension check based on linked CRM contract / due date
+  const g360 = (db as any).g360;
+  if (g360?.crmLeads && Array.isArray(g360.crmLeads)) {
+    const lead = g360.crmLeads.find(
+      (l: any) =>
+        l.projectSlug === slug ||
+        (l.businessName && proj.name && l.businessName.trim().toLowerCase() === proj.name.trim().toLowerCase())
+    );
+
+    if (lead) {
+      const dueDateStr = lead.contractDueDate || lead.dueDate;
+      if (dueDateStr) {
+        const dueTime = new Date(dueDateStr + "T23:59:59").getTime();
+        if (!isNaN(dueTime) && dueTime < Date.now()) {
+          // If contract is past due and hasn't been explicitly forced active
+          if (proj.status !== "forced_active" && lead.autoSuspendOnExpiry !== false) {
+            const diffDays = Math.max(1, Math.floor((Date.now() - dueTime) / 86400000));
+            return res.json({
+              ...proj,
+              status: "suspended",
+              suspendedReason: "contract_expired",
+              expiredDays: diffDays,
+            });
+          }
+        }
+      }
+    }
+  }
+
   res.json(proj);
 });
 
@@ -3282,7 +3494,10 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== "false" ? false : true,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

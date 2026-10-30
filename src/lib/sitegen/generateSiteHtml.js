@@ -89,7 +89,7 @@ export function buildCtx(data) {
   const tplDef = SITE_TEMPLATES.find((t) => t.id === templateId);
   const palList = PALETTES[arch] || PALETTES.produtos;
   const foundPal = ALL_PALETTES.find((p) => p.id === (data.paletteId || tplDef?.paletteId)) || palList[0];
-  const pal = foundPal.vars;
+  const pal = data.customPalette && data.paletteId === "logo-auto" ? data.customPalette : foundPal.vars;
   const font =
     FONT_PAIRS.find((f) => f.id === (data.fontId || tplDef?.fontId)) ||
     FONT_PAIRS.find((f) => f.id === DEFAULT_FONT[arch]) ||
@@ -101,6 +101,7 @@ export function buildCtx(data) {
     pal,
     font,
     logo: data.logo || null,
+    heroLayout: data.heroLayout || "default",
     promo: data.promo || {},
     video: data.video || { url: "" },
     buttons: data.buttons || {},
@@ -267,6 +268,8 @@ function interactionScript(data, editor, trackUrl) {
       ? `
   // ---- Ponte do editor visual limpa (sem linhas intrusivas) ----
   document.addEventListener('click',function(e){
+    var lg=e.target.closest('[data-logo-edit]');
+    if(lg){e.preventDefault();parent.postMessage({__sxp:1,type:'edit-logo'},'*');return}
     var t=e.target.closest('a');if(t){e.preventDefault()}
     var b=e.target.closest('[data-btn]');
     if(b&&!e.target.closest('[data-edit]')){e.preventDefault();parent.postMessage({__sxp:1,type:'inspect-button',id:b.getAttribute('data-btn')},'*');return}
@@ -318,7 +321,6 @@ ${pixelScripts(data)}
 </head>
 <body class="arch-${data.archetype} tpl-${ctx.templateId}">
 ${gtmBody(data)}
-${data.archetype === "produtos" ? S.topbar(ctx) : ""}
 ${S.header(ctx)}
 ${body}
 ${S.bottomShell(ctx)}
@@ -327,16 +329,43 @@ ${interactionScript(data, editor, trackUrl)}
 </html>`;
 }
 
-export function suspendedHtml(name) {
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)} — Indisponível</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<style>body{margin:0;font-family:Inter,sans-serif}svg{width:30px;height:30px}</style></head>
+export function suspendedHtml(name, reason = "manual", expiredDays = 0) {
+  const isExpired = reason === "contract_expired";
+  const title = isExpired ? "Site Temporariamente Fora do Ar" : "Site Temporariamente Indisponível";
+  const badge = isExpired
+    ? `<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(239,68,68,0.18);color:#f87171;border:1px solid rgba(239,68,68,0.35);padding:4px 12px;border-radius:9999px;font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;">Vigência Contratual Expirada${expiredDays > 0 ? ` · Há ${expiredDays}d` : ""}</span>`
+    : `<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);padding:4px 12px;border-radius:9999px;font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;">Manutenção Temporária</span>`;
+
+  const desc = isExpired
+    ? `O período de vigência e manutenção do site de <b>${esc(name)}</b> encerrou seu ciclo contratual.<br><br>Para renovar o contrato digital, regularizar o ciclo ou reativar o endereço oficial da empresa imediatamente, entre em contato com a equipe comercial e de atendimento.`
+    : `O site oficial de <b>${esc(name)}</b> foi pausado temporariamente pela administração.<br><br>Para mais informações ou reativação, consulte os responsáveis pelo atendimento.`;
+
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)} — ${isExpired ? "Contrato Expirado" : "Indisponível"}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>body{margin:0;font-family:Inter,sans-serif;-webkit-font-smoothing:antialiased;}svg{width:32px;height:32px}</style></head>
 <body><div class="susp"><div class="susp-in">
-<div class="ic"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div>
-<h1>Site temporariamente indisponível</h1>
-<p>O site de <b>${esc(name)}</b> está fora do ar no momento. Entre em contato com a administração para renovação ou mais informações.</p>
+<div class="ic ${isExpired ? "ic-exp" : "ic-man"}">
+  ${
+    isExpired
+      ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1.5"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>`
+  }
+</div>
+${badge}
+<h1>${title}</h1>
+<p>${desc}</p>
+<div class="foot">Plataforma G360 · Sistema de Hospedagem & Gestão de Contratos Digitais</div>
 </div></div>
-<style>.susp{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f0e;color:#fff;text-align:center;padding:24px}.susp-in{max-width:440px;display:flex;flex-direction:column;gap:16px;align-items:center}.susp .ic{width:66px;height:66px;border-radius:20px;background:rgba(255,255,255,.08);display:grid;place-items:center;color:#f3c94d}.susp h1{font-size:26px;letter-spacing:-.03em;margin:0}.susp p{color:rgba(255,255,255,.6);font-size:14.5px;line-height:1.7;margin:0}</style>
+<style>
+.susp{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#090d16;color:#fff;text-align:center;padding:32px 20px;}
+.susp-in{max-width:520px;display:flex;flex-direction:column;gap:18px;align-items:center;background:#0f172a;border:1px solid #1e293b;padding:42px 32px;border-radius:24px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);}
+.susp .ic{width:72px;height:72px;border-radius:20px;display:grid;place-items:center;}
+.susp .ic-exp{background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);}
+.susp .ic-man{background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);}
+.susp h1{font-size:26px;font-weight:900;letter-spacing:-0.03em;margin:0;color:#f8fafc;}
+.susp p{color:#94a3b8;font-size:14.5px;line-height:1.75;margin:0;}
+.susp .foot{margin-top:8px;font-size:11.5px;color:#64748b;font-weight:600;letter-spacing:0.02em;}
+</style>
 </body></html>`;
 }
 
@@ -355,31 +384,139 @@ export function downloadHtml(data, filename, slug) {
 
 export async function downloadSiteZip(data, filename, slug) {
   const zip = new JSZip();
-  const html = generateSiteHtml(data, { editor: false, slug });
+  const cleanSlug = (slug || filename || "site-oficial").replace(/\.html$/i, "").replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+  const siteOrigin = (data?.marketing?.canonical || `https://${cleanSlug}.vercel.app`).replace(/\/+$/, "");
+  const html = generateSiteHtml(data, { editor: false, slug: cleanSlug });
+  const nowIso = new Date().toISOString().slice(0, 10);
+
+  // 1. Complete index.html
   zip.file("index.html", html);
-  zip.file("README.md", "# " + (data.business?.name || "Site Express") + "\n" +
-"Este site foi gerado pelo **Site Express Studio Pro**.\n" +
-"Ele é 100% autossuficiente e pode ser hospedado em qualquer provedor estático:\n" +
-"- Vercel: basta arrastar esta pasta\n" +
-"- Netlify / Cloudflare Pages / GitHub Pages\n" +
-"- Servidor cPanel, Nginx ou Apache\n\n" +
-"## Arquivos:\n" +
-"- index.html: Código completo do site com estilos embutidos e scripts de conversão.\n" +
-"- site-manifest.json: Informações e configurações do projeto.\n");
-  zip.file("site-manifest.json", JSON.stringify({
-    name: data.business?.name || "",
-    category: data.business?.category || "",
-    phone: data.business?.phone || data.business?.whatsapp || "",
-    city: data.business?.city || "",
-    uf: data.business?.uf || "",
-    exportedAt: new Date().toISOString()
-  }, null, 2));
+
+  // 2. sitemap.xml for Google Search Console
+  const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${siteOrigin}/</loc>
+    <lastmod>${nowIso}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`;
+  zip.file("sitemap.xml", sitemapXml);
+
+  // 3. robots.txt pointing to sitemap.xml
+  const robotsTxt = `User-agent: *
+Allow: /
+
+Sitemap: ${siteOrigin}/sitemap.xml
+`;
+  zip.file("robots.txt", robotsTxt);
+
+  // 4. manifest.webmanifest for mobile / PWA indexing
+  const webManifest = {
+    name: data.business?.name || "Site Oficial",
+    short_name: (data.business?.name || "Site").slice(0, 20),
+    description: (data.business?.bio || `${data.business?.category || ""} em ${data.business?.city || ""}`).slice(0, 160),
+    start_url: "/",
+    display: "standalone",
+    background_color: "#ffffff",
+    theme_color: "#7C3AED",
+  };
+  zip.file("manifest.webmanifest", JSON.stringify(webManifest, null, 2));
+
+  // 5. Hosting configs: vercel.json & netlify.toml
+  zip.file(
+    "vercel.json",
+    JSON.stringify(
+      {
+        cleanUrls: true,
+        trailingSlash: false,
+        headers: [
+          {
+            source: "/(.*)",
+            headers: [
+              { key: "X-Content-Type-Options", value: "nosniff" },
+              { key: "X-Frame-Options", value: "SAMEORIGIN" },
+            ],
+          },
+        ],
+      },
+      null,
+      2
+    )
+  );
+
+  zip.file(
+    "netlify.toml",
+    `[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+`
+  );
+
+  // 6. Step-by-step instructions for Hosting + Google Search Console
+  zip.file(
+    "COMO-PUBLICAR-E-USAR-SEARCH-CONSOLE.txt",
+    `====================================================================
+PACOTE COMPLETO DE HOSPEDAGEM E GOOGLE SEARCH CONSOLE — ${(data.business?.name || "SITE EXPRESS").toUpperCase()}
+====================================================================
+
+1. ARQUIVOS INCLUSOS NESTA PASTA ZIP:
+   - index.html               -> Página oficial completa com Schema.org LocalBusiness e SEO Local
+   - sitemap.xml              -> Mapa do site oficial para enviar ao Google Search Console
+   - robots.txt               -> Diretrizes de indexação para o Googlebot
+   - manifest.webmanifest     -> Manifesto web para dispositivos móveis
+   - vercel.json / netlify.toml -> Configuração pronta para hospedagem gratuita (Vercel / Netlify)
+   - site-manifest.json       -> Dados estruturados do projeto
+
+2. COMO SUBIR NA HOSPEDAGEM GRATUITA (VERCEL OU NETLIFY) OU PRÓPRIA (HOSTINGER / CPANEL):
+   - Opção A (Pela própria ferramenta G360): Clique em "Publicar Online" no topo do editor para publicar gratuitamente na Vercel, Netlify ou Link Público G360.
+   - Opção B (Netlify Drop Gratuito): Acesse https://app.netlify.com/drop e arraste esta pasta descompactada (ou o arquivo ZIP).
+   - Opção C (Hospedagem tradicional / cPanel / Hostinger / HostGator): Extraia todos os arquivos desta pasta dentro do diretório "public_html" do seu domínio.
+
+3. COMO INDEXAR NO GOOGLE SEARCH CONSOLE:
+   - Passo 1: Acesse https://search.google.com/search-console e adicione a URL do seu site.
+   - Passo 2: Copie o código da "Tag HTML" (google-site-verification) fornecido pelo Google e cole na aba "Marketing & Pixels" do Editor G360 (ou diretamente no <head> do index.html).
+   - Passo 3: No menu lateral do Google Search Console, clique em "Sitemaps" e digite: sitemap.xml -> Clique em Enviar.
+`
+  );
+
+  zip.file(
+    "site-manifest.json",
+    JSON.stringify(
+      {
+        name: data.business?.name || "",
+        category: data.business?.category || "",
+        phone: data.business?.phone || data.business?.whatsapp || "",
+        city: data.business?.city || "",
+        uf: data.business?.uf || "",
+        slug: cleanSlug,
+        files: [
+          "index.html",
+          "sitemap.xml",
+          "robots.txt",
+          "manifest.webmanifest",
+          "vercel.json",
+          "netlify.toml",
+          "COMO-PUBLICAR-E-USAR-SEARCH-CONSOLE.txt",
+        ],
+        exportedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
 
   const blob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = (filename || "site").replace(/\.html$/i, "") + ".zip";
+  a.download = `${cleanSlug}-pacote-hospedagem-seo.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();

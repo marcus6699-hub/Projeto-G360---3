@@ -1,4 +1,5 @@
-import { ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown, Upload, Trash2, Film, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { ARCH_SECTIONS } from "@/lib/sitegen/generateSiteHtml";
 
@@ -61,13 +62,65 @@ export default function SectionsPanel({ data, onChange }) {
             />
           </div>
           {r.id === "video" && r.on && (
-            <input
-              data-testid="video-url-input"
-              className="field mt-2.5 !py-2 !text-[12.5px]"
-              placeholder="URL do vídeo (YouTube, Vimeo ou MP4)"
-              value={data.video?.url || ""}
-              onChange={(e) => onChange((d) => ({ ...d, video: { ...d.video, url: e.target.value } }))}
-            />
+            <div className="mt-3 space-y-2 pt-2 border-t border-slate-100">
+              <div className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                <Film size={12} /> Vídeo da Empresa / Negócio
+              </div>
+              <input
+                data-testid="video-url-input"
+                className="field !py-2 !text-[12px]"
+                placeholder="Cole URL (YouTube, Vimeo ou link MP4)"
+                value={data.video?.url?.startsWith("data:") ? "" : data.video?.url || ""}
+                onChange={(e) => onChange((d) => ({ ...d, video: { ...d.video, url: e.target.value, filename: "" } }))}
+              />
+              <div className="flex items-center gap-2">
+                <label className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border border-dashed border-purple-300 bg-purple-50 hover:bg-purple-100 text-[#7C3AED] text-[11.5px] font-bold cursor-pointer transition">
+                  <Upload size={13} />
+                  <span>Subir Vídeo MP4/WebM do PC</span>
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 80 * 1024 * 1024) {
+                        toast.error("Arquivo de vídeo muito grande. Limite: 80MB.");
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        onChange((d) => ({
+                          ...d,
+                          video: {
+                            ...(d.video || {}),
+                            url: reader.result,
+                            filename: file.name,
+                          },
+                        }));
+                        toast.success(`Vídeo "${file.name}" carregado com sucesso!`);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                {data.video?.url && (
+                  <button
+                    type="button"
+                    onClick={() => onChange((d) => ({ ...d, video: { ...d.video, url: "", filename: "" } }))}
+                    className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                    title="Remover vídeo"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+              {data.video?.filename && (
+                <div className="text-[10.5px] text-emerald-600 font-semibold truncate flex items-center gap-1">
+                  <CheckCircle2 size={12} /> Arquivo: {data.video.filename}
+                </div>
+              )}
+            </div>
           )}
         </div>
       ))}

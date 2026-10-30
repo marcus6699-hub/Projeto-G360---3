@@ -156,6 +156,31 @@ export default function ApiKeysSettings({ dark = false }) {
         </div>
       </section>
 
+      {/* ESCUDO CUSTO ZERO ALERT */}
+      <section className="rounded-2xl p-5 bg-emerald-500/10 border border-emerald-500/30 space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="text-[13.5px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+            <ShieldCheck size={18} />
+            <span>Escudo Custo Zero (R$ 0,00) Ativo — Proteção contra cobranças no &ldquo;My Project 11343&rdquo;</span>
+          </div>
+          {keys.mapsApiKey && (
+            <button
+              type="button"
+              onClick={() => {
+                handleChange("mapsApiKey", "");
+                toast.success("Chave paga do Google Maps removida do formulário! Clique em Salvar Chaves para confirmar.");
+              }}
+              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11.5px] font-extrabold cursor-pointer shrink-0"
+            >
+              Remover Chave Google Maps Paga
+            </button>
+          )}
+        </div>
+        <p className={`text-[12.5px] leading-relaxed ${mutedText}`}>
+          Bloqueamos automaticamente todas as chamadas pagas do Google Cloud (<strong>Places API Enterprise $35/1k</strong>, <strong>Place Photos $7/1k</strong> e <strong>Gemini Search Grounding $35/1k</strong>). O sistema agora opera com <strong>custo R$ 0,00</strong> usando <strong>Outscraper Free Tier</strong> (com fotos diretas gratuitas), <strong>Cache de 7 dias</strong>, <strong>Gemini 3.1 Flash-Lite Free Tier</strong>, <strong>Groq LPU</strong>, <strong>OpenRouter Free</strong> e <strong>NVIDIA NIM</strong>.
+        </p>
+      </section>
+
       {/* FORM */}
       <form onSubmit={handleSave} className={`rounded-2xl p-6 sm:p-8 space-y-6 ${cardClass}`}>
         {!currentUser && (
@@ -172,7 +197,7 @@ export default function ApiKeysSettings({ dark = false }) {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[13px] font-semibold flex items-center gap-1.5">
-                <KeyRound size={14} className="text-[#1A73E8]" /> Google Maps API Key
+                <KeyRound size={14} className="text-[#1A73E8]" /> Google Maps API Key (Opcional — Bloqueada no Modo R$ 0,00)
               </label>
               {renderStatusBadge(keys.mapsApiKey)}
             </div>
@@ -181,7 +206,7 @@ export default function ApiKeysSettings({ dark = false }) {
                 type={showKey.mapsApiKey ? "text" : "password"}
                 value={keys.mapsApiKey}
                 onChange={(e) => handleChange("mapsApiKey", e.target.value)}
-                placeholder="AIzaSy..."
+                placeholder="Deixe em branco para usar apenas Outscraper + Cache Gratuito (R$ 0,00)"
                 className={inputClass}
               />
               <button
@@ -192,7 +217,9 @@ export default function ApiKeysSettings({ dark = false }) {
                 {showKey.mapsApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
-            <p className={`text-[11px] ${mutedText}`}>Usado para Places API New e Geogrid local.</p>
+            <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+              Escudo R$ 0,00 ativo: mesmo se preenchida, o sistema bloqueia chamadas pagas à Places API e usa Outscraper Free + Cache.
+            </p>
           </div>
 
           {/* Outscraper API Key */}

@@ -11,7 +11,13 @@ export default function PublicSite() {
   useEffect(() => {
     api
       .get(`/public/site/${slug}`)
-      .then(({ data }) => setHtml(data.status === "suspended" ? suspendedHtml(data.name) : generateSiteHtml(data.data, { slug })))
+      .then(({ data }) =>
+        setHtml(
+          data.status === "suspended"
+            ? suspendedHtml(data.name, data.suspendedReason, data.expiredDays)
+            : generateSiteHtml(data.data, { slug })
+        )
+      )
       .catch(() => setError(true));
   }, [slug]);
 

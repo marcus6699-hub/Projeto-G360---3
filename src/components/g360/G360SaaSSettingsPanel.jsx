@@ -12,11 +12,12 @@ import {
   Check,
   Copy,
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { api, fmtErr } from "@/lib/api";
 import ApiKeysSettings from "./ApiKeysSettings";
 import GoogleWorkspacePanel from "./GoogleWorkspacePanel";
 
-export default function G360SaaSSettingsPanel({ dark = false }) {
+function AdminSettings({ dark = false, storageKey }) {
   const [users, setUsers] = useState([]);
   const [leads, setLeads] = useState([]);
   const [financeGoals, setFinanceGoals] = useState({
@@ -26,21 +27,21 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
   });
   const [pixConfig, setPixConfig] = useState(() => {
     try {
-      const saved = localStorage.getItem("g360_pix_config");
+      const saved = localStorage.getItem(storageKey);
       return saved
         ? JSON.parse(saved)
         : {
             pixKeyType: "CPF / CNPJ",
-            pixKey: "018.070.701-90",
-            beneficiaryName: "Marcus Henrique Pires Dias",
-            bankName: "Nubank / Inter / Asaas",
+            pixKey: "",
+            beneficiaryName: "",
+            bankName: "",
           };
     } catch {
       return {
         pixKeyType: "CPF / CNPJ",
-        pixKey: "018.070.701-90",
-        beneficiaryName: "Marcus Henrique Pires Dias",
-        bankName: "Nubank / Inter / Asaas",
+        pixKey: "",
+        beneficiaryName: "",
+        bankName: "",
       };
     }
   });
@@ -56,8 +57,8 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
     vercelToken: "",
     netlifyToken: "",
     agencyName: "G360 Google Business Intelligence",
-    agencyPhone: "(62) 99999-0000",
-    agencyDocument: "018.070.701-90",
+    agencyPhone: "",
+    agencyDocument: "",
   });
   const [aiStatus, setAiStatus] = useState({
     provider: "gemini",
@@ -100,7 +101,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
   const handleSavePixConfig = (e) => {
     e.preventDefault();
     try {
-      localStorage.setItem("g360_pix_config", JSON.stringify(pixConfig));
+      localStorage.setItem(storageKey, JSON.stringify(pixConfig));
       toast.success("Configurações de Chave Pix e Recebimento salvas com sucesso!");
     } catch {
       toast.error("Não foi possível salvar a chave Pix.");
@@ -172,31 +173,31 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
   const clientsNeededToHitGoal = Math.ceil(remainingGoal / Math.max(1, avgTicket));
 
   const cardClass = dark
-    ? "bg-[#303134]/90 border border-[#3C4043] text-[#E8EAED]"
-    : "bg-white border border-[#E2E8F0] text-[#1E293B] shadow-[0_1px_3px_rgba(15,23,42,0.04)]";
-  const mutedText = dark ? "text-[#9AA0A6]" : "text-[#64748B]";
-  const subtleBg = dark ? "bg-[#202124]" : "bg-[#F8FAFC]";
-  const borderCol = dark ? "border-[#3C4043]" : "border-[#E2E8F0]";
+    ? "bg-[#14121E] border border-white/[0.08] text-[#EDE9FE] shadow-[0_4px_24px_rgba(0,0,0,0.4)] rounded-2xl"
+    : "bg-white border border-slate-200/80 text-[#1A1033] shadow-[0_2px_12px_rgba(0,0,0,0.06)] rounded-2xl";
+  const mutedText = dark ? "text-[#9D98B3]" : "text-[#64748B]";
+  const subtleBg = dark ? "bg-white/[0.04]" : "bg-slate-50";
+  const borderCol = dark ? "border-white/[0.08]" : "border-slate-200/80";
 
   return (
     <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* HEADER */}
-      <section className={`rounded-2xl p-5 sm:p-6 ${cardClass}`}>
+      <section className={`rounded-3xl p-5 sm:p-7 ${cardClass}`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="text-[12px] font-semibold uppercase tracking-wider text-[#2563EB]">
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#7C3AED] bg-[#EDE9FE] dark:bg-[#7C3AED]/20 px-3 py-1 rounded-full mb-1">
               Painel Administrativo SaaS, Financeiro & Motores Conectados
             </div>
-            <h1 className="text-[22px] sm:text-[25px] font-bold tracking-tight mt-0.5">
+            <h1 className="text-[22px] sm:text-[26px] font-extrabold tracking-tight mt-1 text-slate-900 dark:text-slate-100">
               Administração, Financeiro e Metas, Chave Pix e Gestão de Acessos
             </h1>
-            <p className={`text-[13px] mt-0.5 ${mutedText}`}>
+            <p className={`text-[13px] mt-1 ${mutedText}`}>
               Controle o faturamento da sua operação, configure sua chave Pix para contratos/propostas e gerencie logins de clientes SaaS.
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-[#16A34A]">
+          <div className="flex items-center gap-2 text-[12px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3.5 py-1.5 rounded-full shrink-0">
             <Server size={16} />
-            <span>Backend Node.js + Firebase Cloud Ativo</span>
+            <span>Backend local · integrações externas pendentes</span>
           </div>
         </div>
       </section>
@@ -208,7 +209,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
             <div className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
               Faturamento Realizado
             </div>
-            <div className="text-[28px] font-mono font-extrabold text-[#16A34A] tabular-nums mt-1">
+            <div className="text-[28px] font-mono font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
               R$ {totalRevenue.toLocaleString("pt-BR")}
             </div>
             <div className={`text-[12px] mt-1 ${mutedText}`}>
@@ -220,7 +221,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
             <div className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
               Em Negociação no Funil
             </div>
-            <div className="text-[28px] font-mono font-extrabold text-[#2563EB] tabular-nums mt-1">
+            <div className="text-[28px] font-mono font-extrabold text-[#7C3AED] tabular-nums mt-1">
               R$ {pipelineValue.toLocaleString("pt-BR")}
             </div>
             <div className={`text-[12px] mt-1 ${mutedText}`}>
@@ -232,7 +233,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
             <div className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
               Ticket Médio por Cliente
             </div>
-            <div className="text-[28px] font-mono font-extrabold tabular-nums mt-1">
+            <div className="text-[28px] font-mono font-extrabold tabular-nums mt-1 text-slate-900 dark:text-slate-100">
               R$ {avgTicket.toLocaleString("pt-BR")}
             </div>
             <div className={`text-[12px] mt-1 ${mutedText}`}>
@@ -255,13 +256,13 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           {/* Metas Mensais */}
-          <div className={`lg:col-span-7 rounded-2xl p-6 space-y-4 flex flex-col justify-between ${cardClass}`}>
+          <div className={`lg:col-span-7 rounded-3xl p-6 space-y-4 flex flex-col justify-between ${cardClass}`}>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-inherit">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#2563EB] flex items-center gap-1.5">
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#7C3AED] bg-[#EDE9FE] dark:bg-[#7C3AED]/20 px-3 py-1 rounded-full mb-1">
                   <Target size={14} /> Planejamento Comercial e Metas da Agência
                 </div>
-                <h2 className="text-[17px] font-bold mt-0.5">
+                <h2 className="text-[18px] font-bold mt-1 text-slate-900 dark:text-slate-100">
                   Calculadora de Fechamentos Mensais
                 </h2>
               </div>
@@ -277,27 +278,27 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                       monthlyRevenueGoal: Number(e.target.value || 0),
                     }))
                   }
-                  className={`w-32 px-3 py-1.5 rounded-xl border font-mono font-bold text-[13px] tabular-nums outline-none ${borderCol} ${subtleBg}`}
+                  className={`w-32 px-3.5 py-1.5 rounded-full border font-mono font-bold text-[13px] tabular-nums outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[13px]">
-              <div className={`p-4 rounded-xl border ${borderCol} ${subtleBg}`}>
+              <div className={`p-4 rounded-2xl border ${borderCol} ${subtleBg}`}>
                 <div className={mutedText}>Falta para atingir a meta:</div>
-                <div className="text-[20px] font-mono font-bold text-[#2563EB] tabular-nums mt-1">
+                <div className="text-[20px] font-mono font-bold text-[#7C3AED] tabular-nums mt-1">
                   R$ {remainingGoal.toLocaleString("pt-BR")}
                 </div>
               </div>
-              <div className={`p-4 rounded-xl border ${borderCol} ${subtleBg}`}>
+              <div className={`p-4 rounded-2xl border ${borderCol} ${subtleBg}`}>
                 <div className={mutedText}>Fechamentos necessários:</div>
-                <div className="text-[20px] font-mono font-bold text-[#16A34A] tabular-nums mt-1">
+                <div className="text-[20px] font-mono font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-1">
                   {clientsNeededToHitGoal} clientes
                 </div>
               </div>
-              <div className={`p-4 rounded-xl border ${borderCol} ${subtleBg}`}>
+              <div className={`p-4 rounded-2xl border ${borderCol} ${subtleBg}`}>
                 <div className={mutedText}>Pré-Análises por semana:</div>
-                <div className="text-[20px] font-mono font-bold tabular-nums mt-1">
+                <div className="text-[20px] font-mono font-bold tabular-nums mt-1 text-slate-900 dark:text-slate-100">
                   {Math.max(4, clientsNeededToHitGoal * 2)} fichas
                 </div>
               </div>
@@ -307,15 +308,15 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
           {/* Configuração de Chave Pix e Recebimento */}
           <form
             onSubmit={handleSavePixConfig}
-            className={`lg:col-span-5 rounded-2xl p-6 space-y-4 flex flex-col justify-between ${cardClass}`}
+            className={`lg:col-span-5 rounded-3xl p-6 space-y-4 flex flex-col justify-between ${cardClass}`}
           >
             <div>
               <div className="flex items-center justify-between pb-3 border-b border-inherit">
                 <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[#16A34A] flex items-center gap-1.5">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#7C3AED] bg-[#EDE9FE] dark:bg-[#7C3AED]/20 px-3 py-1 rounded-full mb-1">
                     <QrCode size={14} /> Recebimento Pix da Agência
                   </div>
-                  <h3 className="text-[17px] font-bold mt-0.5">Chave Pix para Propostas e Contratos</h3>
+                  <h3 className="text-[17px] font-bold mt-1 text-slate-900 dark:text-slate-100">Chave Pix para Propostas e Contratos</h3>
                 </div>
                 <button
                   type="button"
@@ -323,7 +324,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                     navigator.clipboard.writeText(pixConfig.pixKey);
                     toast.success("Chave Pix copiada!");
                   }}
-                  className="text-[11px] font-bold text-[#2563EB] flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-1 rounded-full bg-[#EDE9FE] dark:bg-[#7C3AED]/20 text-[#7C3AED] font-bold text-[11px] flex items-center gap-1 cursor-pointer hover:bg-[#7C3AED] hover:text-white transition-all"
                 >
                   <Copy size={12} /> Copiar Pix
                 </button>
@@ -331,13 +332,13 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 text-[12.5px]">
                 <div>
-                  <label className={`block text-[10.5px] font-semibold uppercase mb-1 ${mutedText}`}>
+                  <label className={`block text-[10.5px] font-bold uppercase mb-1 ${mutedText}`}>
                     Tipo de Chave
                   </label>
                   <select
                     value={pixConfig.pixKeyType}
                     onChange={(e) => setPixConfig((p) => ({ ...p, pixKeyType: e.target.value }))}
-                    className={`w-full px-3 py-2 rounded-xl border font-semibold outline-none ${borderCol} ${subtleBg}`}
+                    className={`w-full px-3 py-2 rounded-xl border font-semibold outline-none transition-all focus:border-[#7C3AED] ${borderCol} ${subtleBg}`}
                   >
                     <option value="CPF / CNPJ">CPF / CNPJ</option>
                     <option value="Celular">Celular / WhatsApp</option>
@@ -346,36 +347,36 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                   </select>
                 </div>
                 <div>
-                  <label className={`block text-[10.5px] font-semibold uppercase mb-1 ${mutedText}`}>
+                  <label className={`block text-[10.5px] font-bold uppercase mb-1 ${mutedText}`}>
                     Chave Pix
                   </label>
                   <input
                     type="text"
                     value={pixConfig.pixKey}
                     onChange={(e) => setPixConfig((p) => ({ ...p, pixKey: e.target.value }))}
-                    className={`w-full px-3 py-2 rounded-xl border font-mono outline-none ${borderCol} ${subtleBg}`}
+                    className={`w-full px-3 py-2 rounded-xl border font-mono outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
                   />
                 </div>
                 <div>
-                  <label className={`block text-[10.5px] font-semibold uppercase mb-1 ${mutedText}`}>
+                  <label className={`block text-[10.5px] font-bold uppercase mb-1 ${mutedText}`}>
                     Titular / Favorecido
                   </label>
                   <input
                     type="text"
                     value={pixConfig.beneficiaryName}
                     onChange={(e) => setPixConfig((p) => ({ ...p, beneficiaryName: e.target.value }))}
-                    className={`w-full px-3 py-2 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                    className={`w-full px-3 py-2 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
                   />
                 </div>
                 <div>
-                  <label className={`block text-[10.5px] font-semibold uppercase mb-1 ${mutedText}`}>
+                  <label className={`block text-[10.5px] font-bold uppercase mb-1 ${mutedText}`}>
                     Instituição / Banco
                   </label>
                   <input
                     type="text"
                     value={pixConfig.bankName}
                     onChange={(e) => setPixConfig((p) => ({ ...p, bankName: e.target.value }))}
-                    className={`w-full px-3 py-2 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                    className={`w-full px-3 py-2 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
                   />
                 </div>
               </div>
@@ -383,7 +384,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
 
             <button
               type="submit"
-              className="w-full py-2.5 px-4 rounded-xl bg-[#16A34A] hover:opacity-95 text-white font-semibold text-[13px] flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(16,185,129,0.3)] transition-all"
             >
               <Check size={15} /> Salvar Dados Financeiros e Chave Pix
             </button>
@@ -394,19 +395,19 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
       {/* SECTION 2: USERS & ENGINES */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* LEFT: Multi-User SaaS Login Manager */}
-        <div className={`lg:col-span-6 rounded-2xl p-5 sm:p-6 space-y-5 ${cardClass}`}>
+        <div className={`lg:col-span-6 rounded-3xl p-5 sm:p-7 space-y-5 ${cardClass}`}>
           <div className="pb-3 border-b border-inherit">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-[#2563EB]">
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#7C3AED] bg-[#EDE9FE] dark:bg-[#7C3AED]/20 px-3 py-1 rounded-full mb-1">
               Controle de Assinantes e Acessos
             </div>
-            <h2 className="text-[18px] font-bold mt-0.5">
+            <h2 className="text-[18px] font-bold mt-1 text-slate-900 dark:text-slate-100">
               Liberar Login para Cliente (G360 Completo ou Só Site Express)
             </h2>
           </div>
 
           <form onSubmit={handleCreateUser} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px]">
             <div>
-              <label className={`block text-[11px] font-semibold uppercase mb-1 ${mutedText}`}>
+              <label className={`block text-[11px] font-bold uppercase mb-1 ${mutedText}`}>
                 Nome do Usuário / Agência
               </label>
               <input
@@ -414,11 +415,11 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                 value={newUser.name}
                 onChange={(e) => setNewUser((u) => ({ ...u, name: e.target.value }))}
                 placeholder="Ex: João Consultor GBP"
-                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
               />
             </div>
             <div>
-              <label className={`block text-[11px] font-semibold uppercase mb-1 ${mutedText}`}>
+              <label className={`block text-[11px] font-bold uppercase mb-1 ${mutedText}`}>
                 E-mail de Login
               </label>
               <input
@@ -426,11 +427,11 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                 value={newUser.email}
                 onChange={(e) => setNewUser((u) => ({ ...u, email: e.target.value }))}
                 placeholder="cliente@email.com"
-                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
               />
             </div>
             <div>
-              <label className={`block text-[11px] font-semibold uppercase mb-1 ${mutedText}`}>
+              <label className={`block text-[11px] font-bold uppercase mb-1 ${mutedText}`}>
                 Senha de Acesso
               </label>
               <input
@@ -438,17 +439,17 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                 value={newUser.password}
                 onChange={(e) => setNewUser((u) => ({ ...u, password: e.target.value }))}
                 placeholder="Senha inicial"
-                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                className={`w-full px-3.5 py-2.5 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
               />
             </div>
             <div>
-              <label className={`block text-[11px] font-semibold uppercase mb-1 ${mutedText}`}>
+              <label className={`block text-[11px] font-bold uppercase mb-1 ${mutedText}`}>
                 Produto Liberado no Login
               </label>
               <select
                 value={newUser.plan}
                 onChange={(e) => setNewUser((u) => ({ ...u, plan: e.target.value }))}
-                className={`w-full px-3.5 py-2.5 rounded-xl border font-semibold outline-none ${borderCol} ${subtleBg}`}
+                className={`w-full px-3.5 py-2.5 rounded-xl border font-semibold outline-none transition-all focus:border-[#7C3AED] ${borderCol} ${subtleBg}`}
               >
                 <option value="g360_full">G360 Completo (Auditoria + Pacote GBP + CRM + Site Express)</option>
                 <option value="site_express_only">Apenas Site Express (Produto Separado)</option>
@@ -457,7 +458,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
             <div className="sm:col-span-2 pt-1">
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold text-[13px] flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] hover:opacity-95 text-white font-bold text-[13px] flex items-center justify-center gap-2 cursor-pointer shadow-[0_4px_14px_rgba(124,58,237,0.3)] transition-all"
               >
                 <Plus size={15} /> Criar Login de Cliente
               </button>
@@ -465,28 +466,28 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
           </form>
 
           <div className="space-y-2.5 pt-3 border-t border-inherit">
-            <div className={`text-[11px] font-semibold uppercase tracking-wider ${mutedText}`}>
+            <div className={`text-[11px] font-bold uppercase tracking-wider ${mutedText}`}>
               Usuários Cadastrados ({users.length})
             </div>
             <div className="space-y-2">
               {users.map((u) => (
                 <div
                   key={u.id}
-                  className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-[13px] ${borderCol} ${subtleBg}`}
+                  className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 text-[13px] ${borderCol} ${subtleBg}`}
                 >
                   <div>
-                    <div className="font-bold flex items-center gap-2">
+                    <div className="font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
                       <span>{u.name}</span>
-                      <span className="text-[11px] font-semibold text-[#2563EB]">
-                        · {u.plan === "site_express_only" ? "Apenas Site Express" : "G360 Completo"}
+                      <span className="text-[11px] font-bold text-[#7C3AED] bg-[#EDE9FE] dark:bg-[#7C3AED]/20 px-2 py-0.5 rounded-full">
+                        {u.plan === "site_express_only" ? "Apenas Site Express" : "G360 Completo"}
                       </span>
                     </div>
-                    <div className={`text-[12px] ${mutedText}`}>{u.email}</div>
+                    <div className={`text-[12px] mt-0.5 ${mutedText}`}>{u.email}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleDeleteUser(u.id)}
-                    className={`p-2 rounded-lg hover:bg-black/10 ${mutedText}`}
+                    className={`p-2 rounded-full hover:bg-rose-500/10 hover:text-rose-500 transition-colors ${mutedText}`}
                     title="Revogar acesso"
                   >
                     <Trash2 size={15} />
@@ -498,13 +499,13 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
         </div>
 
         {/* RIGHT: Real-Time Multi-Engine Diagnostic & Agency Brand */}
-        <div className={`lg:col-span-6 rounded-2xl p-5 sm:p-6 space-y-5 ${cardClass}`}>
+        <div className={`lg:col-span-6 rounded-3xl p-5 sm:p-7 space-y-5 ${cardClass}`}>
           <div className="pb-3 border-b border-inherit flex items-center justify-between gap-3">
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-[#16A34A]">
+              <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full mb-1">
                 Status das Integrações no Servidor
               </div>
-              <h2 className="text-[18px] font-bold mt-0.5">
+              <h2 className="text-[18px] font-bold mt-1 text-slate-900 dark:text-slate-100">
                 Motores Google Maps, Outscraper, Gemini, NVIDIA e OpenRouter
               </h2>
             </div>
@@ -513,7 +514,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
               onClick={handleRunEngineTest}
               disabled={testingEngines}
               data-testid="test-engines-btn"
-              className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold cursor-pointer shrink-0"
+              className="px-4 py-2 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] hover:opacity-95 text-white text-xs font-bold cursor-pointer shrink-0 shadow-[0_4px_12px_rgba(124,58,237,0.25)] transition-all"
             >
               {testingEngines ? "Testando..." : "Testar Motores Ao Vivo"}
             </button>
@@ -523,28 +524,28 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
             {Object.entries(engines).map(([key, item]) => (
               <div
                 key={key}
-                className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 ${borderCol} ${subtleBg}`}
+                className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${borderCol} ${subtleBg}`}
               >
                 <div>
-                  <div className="text-xs font-bold">{item.label}</div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{item.label}</div>
                   <div className={`text-[11px] mt-0.5 ${mutedText}`}>{item.mode}</div>
                 </div>
                 <span
                   className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                     item.active
-                      ? "bg-[#DCFCE7] text-[#15803D]"
-                      : "bg-[#FEF3C7] text-[#B45309]"
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
                   }`}
                 >
-                  {item.active ? "ATIVO" : "VIA .ENV"}
+                  {item.active ? "Verificado" : "Não verificado"}
                 </span>
               </div>
             ))}
           </div>
 
           {testResult && (
-            <div className="p-4 rounded-xl border border-[#16A34A]/40 bg-[#16A34A]/10 space-y-1.5 text-xs">
-              <div className="font-bold text-[#16A34A]">
+            <div className="p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 space-y-1.5 text-xs">
+              <div className="font-bold text-emerald-600 dark:text-emerald-400">
                 Teste Real Executado — Fonte: {testResult.resolvedSource} | IA: {testResult.aiProviderUsed}
               </div>
               <div>
@@ -556,7 +557,7 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
 
           <form onSubmit={handleSaveDeploySettings} className="space-y-3 pt-3 border-t border-inherit text-[13px]">
             <div>
-              <label className={`block text-[11px] font-semibold uppercase mb-1 ${mutedText}`}>
+              <label className={`block text-[11px] font-bold uppercase mb-1 ${mutedText}`}>
                 Nome da Sua Agência (Exibido nos Relatórios PDF, Propostas e Contratos)
               </label>
               <div className="flex gap-2">
@@ -564,11 +565,11 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
                   type="text"
                   value={deploySettings.agencyName}
                   onChange={(e) => setDeploySettings((s) => ({ ...s, agencyName: e.target.value }))}
-                  className={`flex-1 px-3.5 py-2.5 rounded-xl border outline-none ${borderCol} ${subtleBg}`}
+                  className={`flex-1 px-3.5 py-2.5 rounded-xl border outline-none transition-all focus:border-[#7C3AED] focus:ring-2 focus:ring-[#C4B5FD]/30 ${borderCol} ${subtleBg}`}
                 />
                 <button
                   type="submit"
-                  className="px-4 py-2.5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold text-xs cursor-pointer"
+                  className="px-4 py-2.5 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#A855F7] hover:opacity-95 text-white font-bold text-xs cursor-pointer shadow-[0_4px_12px_rgba(124,58,237,0.25)] transition-all shrink-0"
                 >
                   Salvar Marca
                 </button>
@@ -587,4 +588,11 @@ export default function G360SaaSSettingsPanel({ dark = false }) {
       </div>
     </div>
   );
+}
+
+export default function G360SaaSSettingsPanel(props) {
+ const {user}=useAuth();
+ if(user?.role!=="admin")return <p role="alert" className="p-6">Administração restrita a administradores.</p>;
+ const uid=user.id||user.uid;
+ return <AdminSettings key={uid} {...props} storageKey={`g360_pix_config:${uid}`}/>;
 }

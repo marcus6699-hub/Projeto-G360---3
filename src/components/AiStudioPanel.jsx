@@ -16,7 +16,9 @@ import {
   Copy,
   Download,
   FileText,
+  FolderArchive,
 } from "lucide-react";
+import JSZip from "jszip";
 import { api, fmtErr } from "@/lib/api";
 import {
   buildCompanyImageDataJson,
@@ -194,22 +196,48 @@ export default function AiStudioPanel({ data, onChange }) {
         city: b.city,
         segment: data.archetype,
       });
-      onChange((d) => ({
-        ...d,
-        texts: {
-          ...d.texts,
-          "hero.title": res.heroTitle || d.texts["hero.title"],
-          "hero.accent": res.heroAccent || d.texts["hero.accent"],
-          "hero.subtitle": res.heroSubtitle || d.texts["hero.subtitle"],
-        },
-        business: {
-          ...d.business,
-          bio: res.heroSubtitle || d.business.bio,
-          items: res.items?.length ? res.items : d.business.items,
-          faqs: res.faqs?.length ? res.faqs : d.business.faqs,
-        },
-      }));
-      toast.success("Textos, catálogo e FAQs gerados com IA gratuita!");
+      onChange((d) => {
+        const nextTexts = {
+          ...(d.texts || {}),
+          "hero.title": res.heroTitle || d.texts?.["hero.title"],
+          "hero.accent": res.heroAccent || d.texts?.["hero.accent"],
+          "hero.subtitle": res.heroSubtitle || d.texts?.["hero.subtitle"],
+          "about.body": res.heroSubtitle || d.texts?.["about.body"],
+        };
+        if (Array.isArray(res.items)) {
+          res.items.forEach((it, idx) => {
+            if (it?.name) nextTexts[`item.${idx}.name`] = it.name;
+            if (it?.description) nextTexts[`item.${idx}.description`] = it.description;
+            if (it?.price) nextTexts[`item.${idx}.price`] = it.price;
+            if (it?.badge) nextTexts[`item.${idx}.badge`] = it.badge;
+          });
+        }
+        if (Array.isArray(res.faqs)) {
+          res.faqs.forEach((fq, idx) => {
+            if (fq?.q) nextTexts[`faq.${idx}.q`] = fq.q;
+            if (fq?.a) nextTexts[`faq.${idx}.a`] = fq.a;
+          });
+        }
+        const existingItems = d.business?.items || [];
+        const mergedItems = res.items?.length
+          ? res.items.map((it, idx) => ({
+              ...existingItems[idx],
+              ...it,
+              image: it.image || existingItems[idx]?.image || b.photos?.[idx % Math.max(1, (b.photos || []).length)] || "",
+            }))
+          : existingItems;
+        return {
+          ...d,
+          texts: nextTexts,
+          business: {
+            ...d.business,
+            bio: res.heroSubtitle || d.business.bio,
+            items: mergedItems,
+            faqs: res.faqs?.length ? res.faqs : d.business.faqs,
+          },
+        };
+      });
+      toast.success("Textos, catálogo e FAQs gerados e aplicados ao site!");
     } catch (e) {
       toast.error(fmtErr(e, "Falha ao gerar kit com IA"));
     } finally {
@@ -478,40 +506,97 @@ export default function AiStudioPanel({ data, onChange }) {
     toast.success("Vídeo publicado e seção 'Vídeo Institucional' ativada no site!");
   };
 
-  // 6. Clonar / Replicar Site por URL ou HTML
-  const runCloneSite = async () => {
-    if (!cloneUrl.trim() && !cloneHtml.trim()) {
-      toast.error("Informe a URL do site ou cole o código HTML para replicar.");
+  // 6. Clonar / Replicar Site por URL, HTML ou Pasta ZIP do Computador
+  const [cloneUploadedFileName, setCloneUploadedFileName] = useState("");
+
+  const runCloneSite = async (overrideHtml = null) => {
+    const htmlPayload = typeof overrideHtml === "string" ? overrideHtml : cloneHtml;
+    if (!cloneUrl.trim() && !htmlPayload.trim()) {
+      toast.error("Informe a URL do site, envie um arquivo .ZIP/.HTML ou cole o código HTML para replicar.");
       return;
     }
     setBusy(true);
     try {
       const { data: res } = await api.post("/ai/clone-site", {
         url: cloneUrl,
-        rawHtml: cloneHtml,
+        rawHtml: htmlPayload,
       });
       if (res.business) {
-        onChange((d) => ({
-          ...d,
-          archetype: res.business.segment || d.archetype,
-          texts: {
-            ...d.texts,
-            "brand.name": res.business.name,
-            "hero.title": res.heroTitle || res.business.name,
+        onChange((d) => {
+          const nextTexts = {
+            ...(d.texts || {}),
+            "brand.name": res.business.name || d.texts?.["brand.name"],
+            "hero.title": res.heroTitle || res.business.name || d.texts?.["hero.title"],
             "hero.accent": res.heroAccent || "",
-            "hero.subtitle": res.business.bio,
-          },
-          business: {
-            ...d.business,
-            ...res.business,
-          },
-        }));
-        toast.success("Site replicado com sucesso no canvas!");
+            "hero.subtitle": res.business.bio || d.texts?.["hero.subtitle"],
+            "about.body": res.business.bio || d.texts?.["about.body"],
+          };
+          const existingItems = d.business?.items || [];
+          const clonedItems = Array.isArray(res.business.items) && res.business.items.length > 0
+            ? res.business.items.map((it, idx) => ({
+                ...existingItems[idx],
+                ...it,
+                image: it.image || existingItems[idx]?.image || b.photos?.[idx % Math.max(1, (b.photos || []).length)] || "",
+              }))
+            : existingItems;
+          clonedItems.forEach((it, idx) => {
+            if (it?.name) nextTexts[`item.${idx}.name`] = it.name;
+            if (it?.description) nextTexts[`item.${idx}.description`] = it.description;
+            if (it?.price) nextTexts[`item.${idx}.price`] = it.price;
+            if (it?.badge) nextTexts[`item.${idx}.badge`] = it.badge;
+          });
+          return {
+            ...d,
+            archetype: res.business.segment || d.archetype,
+            paletteId: res.palette_id || d.paletteId,
+            texts: nextTexts,
+            business: {
+              ...d.business,
+              ...res.business,
+              items: clonedItems,
+              photos: res.business.photos?.length ? res.business.photos : d.business?.photos,
+            },
+          };
+        });
+        toast.success(`Site "${res.business.name || "Referência"}" replicado com sucesso no canvas!`);
       }
     } catch (e) {
       toast.error(fmtErr(e, "Falha ao replicar site"));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleCloneFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCloneUploadedFileName(file.name);
+    try {
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        const zip = await JSZip.loadAsync(file);
+        const htmlEntries = Object.keys(zip.files).filter(
+          (k) => !zip.files[k].dir && (k.toLowerCase().endsWith(".html") || k.toLowerCase().endsWith(".htm"))
+        );
+        const mainEntry =
+          htmlEntries.find((k) => k.toLowerCase().endsWith("index.html")) || htmlEntries[0];
+        if (!mainEntry) {
+          toast.error("Nenhum arquivo .html encontrado dentro do pacote .ZIP.");
+          return;
+        }
+        const extractedHtml = await zip.files[mainEntry].async("string");
+        setCloneHtml(extractedHtml);
+        toast.info(`Arquivo "${mainEntry}" extraído do ZIP! Replicando estrutura no canvas...`);
+        await runCloneSite(extractedHtml);
+      } else {
+        const text = await file.text();
+        setCloneHtml(text);
+        toast.info(`Arquivo "${file.name}" carregado! Replicando estrutura no canvas...`);
+        await runCloneSite(text);
+      }
+    } catch (err) {
+      toast.error("Não foi possível ler o arquivo enviado: " + (err?.message || "Erro desconhecido"));
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -1050,18 +1135,37 @@ export default function AiStudioPanel({ data, onChange }) {
         </div>
       )}
 
-      {/* 6. CLONAR / REPLICAR SITE POR URL OU HTML */}
+      {/* 6. CLONAR / REPLICAR SITE POR URL, ARQUIVO ZIP/HTML OU CÓDIGO */}
       {subTab === "clone" && (
         <div className="panel !rounded-xl p-4 space-y-3" data-testid="ai-panel-clone">
           <div className="flex items-center gap-2">
             <CopyPlus size={15} className="text-indigo-600" />
-            <b className="text-[13px] text-slate-900">Replicar Site por URL / HTML</b>
+            <b className="text-[13px] text-slate-900">Replicar Site por URL, ZIP ou HTML</b>
           </div>
           <p className="text-[11.5px] text-slate-500 leading-relaxed">
-            Informe o link de qualquer site de referência ou cole o HTML para extrair textos, cores, catálogo e estrutura com <code>gemini-3.8-flash</code>.
+            Informe o link de qualquer site de referência, envie uma pasta <b>.ZIP / .HTML</b> do seu computador ou cole o código para extrair textos, cores e catálogo com <code>gemini-3.8-flash</code>.
           </p>
+
           <div>
-            <label className="field-label">URL do Site de Referência</label>
+            <label className="field-label">1. Subir Arquivo do Computador (.ZIP ou .HTML)</label>
+            <label
+              data-testid="ai-clone-file-upload-label"
+              className="mt-1 flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 font-bold text-[12px] cursor-pointer transition-colors"
+            >
+              <FolderArchive size={15} />
+              <span>{cloneUploadedFileName ? `Arquivo: ${cloneUploadedFileName}` : "Escolher arquivo .ZIP ou .HTML do PC"}</span>
+              <input
+                type="file"
+                accept=".zip,.html,.htm"
+                data-testid="ai-clone-file-upload"
+                onChange={handleCloneFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <div>
+            <label className="field-label">2. Ou informe a URL do Site de Referência</label>
             <input
               data-testid="ai-clone-url-input"
               value={cloneUrl}
@@ -1071,7 +1175,7 @@ export default function AiStudioPanel({ data, onChange }) {
             />
           </div>
           <div>
-            <label className="field-label">Ou cole o código HTML (opcional)</label>
+            <label className="field-label">3. Ou cole o código HTML (opcional)</label>
             <textarea
               rows={3}
               data-testid="ai-clone-html-input"
@@ -1083,7 +1187,7 @@ export default function AiStudioPanel({ data, onChange }) {
           </div>
           <button
             data-testid="ai-clone-run-btn"
-            onClick={runCloneSite}
+            onClick={() => runCloneSite()}
             disabled={busy}
             className="btn-primary-dark w-full !py-2.5 !text-[12px]"
           >

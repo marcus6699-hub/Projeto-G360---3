@@ -90,7 +90,7 @@ describe("G360 Hardening & Quality Audit Test Suite", () => {
     assert.ok(siteCrit, "Website criterion must exist");
     assert.strictEqual(siteCrit.status, "warning", "Instagram link should produce warning status");
     assert.strictEqual(siteCrit.score, 5, "Instagram link score should be 5/12");
-    assert.strictEqual(siteCrit.isInstagram, true, "isInstagram should be true");
+    assert.strictEqual((siteCrit as any).isInstagram, true, "isInstagram should be true");
     assert.ok(
       (siteCrit.whyItMatters || "").includes("Instagram") || (siteCrit.whyItMatters || "").includes("rede social"),
       "Reason must explain that Instagram does not substitute an institutional website"

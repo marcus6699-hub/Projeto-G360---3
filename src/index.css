@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "./g360-tokens.css";
+
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/nunito-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/nunito-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/nunito-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/nunito-latin-800-normal.woff2") format("woff2"); }
 
 @theme {
   --color-background: #ffffff;
@@ -22,9 +28,16 @@
   --color-ring: #0a0a0a;
 }
 
-body {
+html,
+body,
+#root {
   margin: 0;
-  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: "Nunito", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #F8F9FA;
@@ -32,8 +45,8 @@ body {
 }
 
 ::selection {
-  background: #1A73E8;
-  color: #ffffff;
+  background: var(--g360-lavender);
+  color: var(--g360-purple-dark);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -156,21 +169,22 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: #111827;
+  background: #7C3AED;
   color: #fff;
   font-weight: 600;
   font-size: 14px;
-  border-radius: 10px;
-  padding: 11px 20px;
+  border-radius: 12px;
+  padding: 10px 20px;
   border: none;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s, background-color 0.2s;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.25);
 }
 
 .btn-primary-dark:hover {
-  background: #1F2937;
+  background: #6D28D9;
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px -10px rgba(17, 24, 39, 0.5);
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.35);
 }
 
 .btn-primary-dark:disabled {
