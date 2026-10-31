@@ -79,9 +79,15 @@ export const DEFAULT_CONFIG: CostGuardConfig = {
     },
     outscraper: {
       name: "Outscraper Google Maps v3 (Free Tier 500 Empresas/mês — Sem Cobrança GCP)",
-      dailyLimit: 100,
-      rateLimitPerMin: 10,
+      dailyLimit: 500,
+      rateLimitPerMin: 60,
       blockPaidCalls: false, // Permitido no Free Tier (não cobra no Google Cloud)
+    },
+    serper: {
+      name: "Serper Google Places Search (Free Tier — Sem Cobrança GCP)",
+      dailyLimit: 1000,
+      rateLimitPerMin: 120,
+      blockPaidCalls: false,
     },
   },
 };
@@ -127,7 +133,11 @@ export class CostGuardService {
           if (isStrict && !raw.config?.allowPaidGcpOverride) {
             if (mergedServices.google_places) mergedServices.google_places.blockPaidCalls = true;
             if (mergedServices.gemini_grounding_paid) mergedServices.gemini_grounding_paid.blockPaidCalls = true;
-            if (mergedServices.outscraper) mergedServices.outscraper.blockPaidCalls = false;
+            if (mergedServices.outscraper) {
+              mergedServices.outscraper.blockPaidCalls = false;
+              mergedServices.outscraper.dailyLimit = Math.max(mergedServices.outscraper.dailyLimit || 0, 500);
+              mergedServices.outscraper.rateLimitPerMin = Math.max(mergedServices.outscraper.rateLimitPerMin || 0, 60);
+            }
           }
           return {
             date: today,

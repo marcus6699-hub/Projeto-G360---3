@@ -20,6 +20,7 @@ import {
   ExternalLink,
   ShieldCheck,
   PhoneCall,
+  Trash2,
 } from "lucide-react";
 import { api, fmtErr } from "@/lib/api";
 
@@ -27,6 +28,7 @@ export default function G360GbpPackagePanel({
   dark = false,
   activeBusiness,
   onOpenSiteExpressWithBriefing,
+  onBack,
 }) {
   const [pkg, setPkg] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +41,9 @@ export default function G360GbpPackagePanel({
   const [customSearchTermsText, setCustomSearchTermsText] = useState("");
   const [customProductNamesText, setCustomProductNamesText] = useState("");
   const [discoveringWeb, setDiscoveringWeb] = useState(false);
+  const [modoIaCustomPrompt, setModoIaCustomPrompt] = useState("");
   const [selectedTone, setSelectedTone] = useState("comercial"); // "comercial" | "persuasivo" | "amigavel"
+  const [hydratedBizKey, setHydratedBizKey] = useState("");
 
   // Add service modal/inline state
   const [newServiceName, setNewServiceName] = useState("");
@@ -47,10 +51,44 @@ export default function G360GbpPackagePanel({
   const [userPhotos, setUserPhotos] = useState([]);
   const [regeneratingKey, setRegeneratingKey] = useState("");
   const [regeneratingBatch, setRegeneratingBatch] = useState("");
-  const [aiHealthModalOpen, setAiHealthModalOpen] = useState(false);
-  const [aiHealthLoading, setAiHealthLoading] = useState(false);
-  const [aiHealthData, setAiHealthData] = useState(null);
   const [generatingAiPhoto, setGeneratingAiPhoto] = useState(false);
+
+  const getBizStorageKey = (biz) => {
+    const raw = String(biz?.place_id || biz?.name || "default")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_");
+    return `g360_gbp_pkg_v2_${raw}`;
+  };
+
+  const cleanLineItem = (line) =>
+    String(line || "")
+      .replace(/^[•\-\*\u2022\d]+[\.\)\-\s]*/, "")
+      .trim();
+
+  const persistDraftState = (biz, nextDraft) => {
+    if (!biz?.name && !biz?.place_id) return;
+    const storageKey = getBizStorageKey(biz);
+    try {
+      const existingRaw = localStorage.getItem(storageKey);
+      const existing = existingRaw ? JSON.parse(existingRaw) : {};
+      const merged = {
+        ...existing,
+        ...nextDraft,
+        updatedAt: Date.now(),
+      };
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+    } catch {
+      // Ignore storage quota errors
+    }
+    api
+      .post("/g360/gbp-package/save-draft", {
+        businessName: biz?.name || nextDraft?.pkg?.businessName,
+        placeId: biz?.place_id || "",
+        ...nextDraft,
+      })
+      .catch(() => {});
+  };
 
   const handleRegenerateBatch = async (batch_type) => {
     if (!pkg) return;
@@ -99,22 +137,6 @@ export default function G360GbpPackagePanel({
       toast.error(fmtErr(e, "Erro ao regenerar lote com IA"));
     } finally {
       setRegeneratingBatch("");
-    }
-  };
-
-  const runAiHealthTest = async () => {
-    setAiHealthModalOpen(true);
-    setAiHealthLoading(true);
-    try {
-      const { data } = await api.post("/g360/ai-health-check");
-      setAiHealthData(data);
-      if (data?.activeCount > 0) {
-        toast.success(`${data.activeCount} de ${data.totalTested} motores de IA conectados e respondendo ao vivo!`);
-      }
-    } catch (e) {
-      toast.error(fmtErr(e, "Erro ao testar conexão com as IAs"));
-    } finally {
-      setAiHealthLoading(false);
     }
   };
 
@@ -244,6 +266,42 @@ export default function G360GbpPackagePanel({
       .catch(() => {});
   };
 
+  const handleDeleteItem = (item_type, item_index) => {
+    setPkg((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      if (item_type === "product" && Array.isArray(next.products)) {
+        next.products = next.products.filter((_, i) => i !== item_index);
+        const nextProdNames = next.products.map((p) => p.name).filter(Boolean);
+        setCustomProductNamesText(nextProdNames.join("\n"));
+        toast.success("Produto removido com sucesso!");
+      } else if (item_type === "service" && Array.isArray(next.services)) {
+        next.services = next.services.filter((_, i) => i !== item_index);
+        const nextTerms = next.services.map((s) => s.name).filter(Boolean);
+        setCustomSearchTermsText(nextTerms.join("\n"));
+        toast.success("Serviço/Termo removido com sucesso!");
+      }
+      return next;
+    });
+  };
+
+  const handleAddProduct = () => {
+    setPkg((prev) => {
+      if (!prev) return prev;
+      const newProd = {
+        name: `Novo Produto ${(prev.products?.length || 0) + 1}`,
+        category: prev.primaryCategory || "Produtos",
+        priceLabel: "Consulte pelo WhatsApp",
+        selectedForSite: true,
+        description: `Produto com alto padrão de qualidade e pronta entrega na ${prev.businessName || "nossa empresa"} em ${prev.city || "Anápolis"}. Solicite seu orçamento com nossa equipe pelo WhatsApp.`,
+      };
+      const nextProducts = [...(prev.products || []), newProd];
+      setCustomProductNamesText(nextProducts.map((p) => p.name).filter(Boolean).join("\n"));
+      toast.success("Novo produto adicionado!");
+      return { ...prev, products: nextProducts };
+    });
+  };
+
   const generatePackage = async (bizOverride, opts = {}) => {
     setLoading(true);
     try {
@@ -257,20 +315,20 @@ export default function G360GbpPackagePanel({
       const toneToUse = opts.tone || selectedTone || "comercial";
       const contextToUse = opts.customContext !== undefined ? opts.customContext : customDifferential;
       const nicheToUse = opts.realNiche !== undefined ? opts.realNiche : realNiche;
-      const parsedTerms =
+      const parsedTerms = (
         opts.customSearchTerms !== undefined
           ? opts.customSearchTerms
-          : customSearchTermsText
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean);
-      const parsedProducts =
+          : customSearchTermsText.split(/\r?\n/)
+      )
+        .map(cleanLineItem)
+        .filter(Boolean);
+      const parsedProducts = (
         opts.customProductNames !== undefined
           ? opts.customProductNames
-          : customProductNamesText
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean);
+          : customProductNamesText.split(/\r?\n/)
+      )
+        .map(cleanLineItem)
+        .filter(Boolean);
 
       const { data } = await api.post("/g360/gbp-package/generate", {
         business: target,
@@ -284,18 +342,38 @@ export default function G360GbpPackagePanel({
       });
       if (data?.pkg) {
         setPkg(data.pkg);
-        if (data.pkg.customContext && !customDifferential) {
-          setCustomDifferential(data.pkg.customContext);
+        const nextTermsText =
+          parsedTerms.length > 0
+            ? parsedTerms.join("\n")
+            : Array.isArray(data.pkg.services)
+            ? data.pkg.services.map((s) => cleanLineItem(s.name)).join("\n")
+            : customSearchTermsText;
+        const nextProdsText =
+          parsedProducts.length > 0
+            ? parsedProducts.join("\n")
+            : Array.isArray(data.pkg.products)
+            ? data.pkg.products.map((p) => cleanLineItem(p.name)).join("\n")
+            : customProductNamesText;
+
+        if (!customSearchTermsText && nextTermsText) {
+          setCustomSearchTermsText(nextTermsText);
         }
-        if (Array.isArray(data.pkg.services) && !customSearchTermsText && !opts.customSearchTerms) {
-          setCustomSearchTermsText(data.pkg.services.map((s) => s.name).join("\n"));
+        if (!customProductNamesText && nextProdsText) {
+          setCustomProductNamesText(nextProdsText);
         }
-        if (Array.isArray(data.pkg.products) && !customProductNamesText && !opts.customProductNames) {
-          setCustomProductNamesText(data.pkg.products.map((p) => p.name).join("\n"));
-        }
+
+        persistDraftState(target, {
+          realNiche: nicheToUse,
+          customContext: contextToUse,
+          customSearchTerms: nextTermsText.split(/\r?\n/).map(cleanLineItem).filter(Boolean),
+          customProductNames: nextProdsText.split(/\r?\n/).map(cleanLineItem).filter(Boolean),
+          tone: toneToUse,
+          pkg: data.pkg,
+        });
+
         if (opts.customContext || opts.customSearchTerms || opts.customProductNames) {
           toast.success(
-            `Pacote atualizado em Categorias, 750c, 20 Serviços, 6 Produtos e 11 Posts (${data.pkg.aiProviderUsed || "IA Ativa"})!`
+            "Pacote atualizado em Categorias, Descrição 750c, 20 Serviços, 6 Produtos e 11 Publicações!"
           );
         }
       }
@@ -306,7 +384,7 @@ export default function G360GbpPackagePanel({
     }
   };
 
-  const handleDiscoverFromWeb = async () => {
+  const handleDiscoverFromWeb = async (presetMode = "all") => {
     setDiscoveringWeb(true);
     try {
       const target = activeBusiness || {
@@ -318,31 +396,57 @@ export default function G360GbpPackagePanel({
       const { data } = await api.post("/g360/gbp-package/discover-web", {
         business: target,
         realNiche: realNiche || target.category || "",
+        customPrompt: modoIaCustomPrompt || "",
       });
       if (data?.ok) {
-        const discoveredNiche = data.realNiche || realNiche || target.category || "";
-        const discoveredBio = data.commercialBio || customDifferential || "";
-        const discoveredTerms = Array.isArray(data.top20SearchTerms) ? data.top20SearchTerms : [];
-        const discoveredProducts = Array.isArray(data.top6Products) ? data.top6Products : [];
+        const payload = data.discovery || data;
+        const discoveredNiche = payload.realNiche || realNiche || target.category || "";
+        const discoveredBio = payload.commercialBio || customDifferential || "";
+        const discoveredTerms = Array.isArray(payload.top20SearchTerms)
+          ? payload.top20SearchTerms.map(cleanLineItem).filter(Boolean)
+          : [];
+        const discoveredProducts = Array.isArray(payload.top6Products)
+          ? payload.top6Products.map(cleanLineItem).filter(Boolean)
+          : [];
 
-        setRealNiche(discoveredNiche);
-        setCustomDifferential(discoveredBio);
-        if (discoveredTerms.length > 0) {
-          setCustomSearchTermsText(discoveredTerms.join("\n"));
+        const nextNiche = presetMode === "all" || !realNiche ? discoveredNiche : realNiche;
+        const nextBio =
+          presetMode === "all" || presetMode === "bio" ? discoveredBio : customDifferential;
+        const nextTermsList =
+          presetMode === "all" || presetMode === "terms"
+            ? discoveredTerms
+            : customSearchTermsText.split(/\r?\n/).map(cleanLineItem).filter(Boolean);
+        const nextProdsList =
+          presetMode === "all" || presetMode === "products"
+            ? discoveredProducts
+            : customProductNamesText.split(/\r?\n/).map(cleanLineItem).filter(Boolean);
+
+        setRealNiche(nextNiche);
+        if (presetMode === "all" || presetMode === "bio") {
+          setCustomDifferential(nextBio);
         }
-        if (discoveredProducts.length > 0) {
-          setCustomProductNamesText(discoveredProducts.join("\n"));
+        if ((presetMode === "all" || presetMode === "terms") && nextTermsList.length > 0) {
+          setCustomSearchTermsText(nextTermsList.join("\n"));
+        }
+        if ((presetMode === "all" || presetMode === "products") && nextProdsList.length > 0) {
+          setCustomProductNamesText(nextProdsList.join("\n"));
         }
 
         toast.success(
-          `Pesquisa concluída (${data.source || "Google Search + IA"}): 20 termos locais + 6 produtos + bio carregados!`
+          presetMode === "bio"
+            ? `Bio Comercial Completa (${nextBio.length} caracteres sem emojis) gerada na Caixa 2!`
+            : presetMode === "terms"
+            ? "20 Termos Locais limpos (sem numeração) preenchidos na Caixa 3!"
+            : presetMode === "products"
+            ? "6 Categorias de Produtos (apenas nomes) preenchidas na Caixa 4!"
+            : `Pesquisa Modo IA concluída: Bio (${nextBio.length}c) + 20 Termos + 6 Produtos preenchidos e salvos!`
         );
 
         await generatePackage(target, {
-          realNiche: discoveredNiche,
-          customContext: discoveredBio,
-          customSearchTerms: discoveredTerms,
-          customProductNames: discoveredProducts,
+          realNiche: nextNiche,
+          customContext: nextBio,
+          customSearchTerms: nextTermsList,
+          customProductNames: nextProdsList,
           tone: selectedTone,
           useAi: true,
         });
@@ -355,7 +459,7 @@ export default function G360GbpPackagePanel({
   };
 
   useEffect(() => {
-    setPkg(null);
+    let cancelled = false;
     const rawPhotos = Array.isArray(activeBusiness?.photos) ? activeBusiness.photos : [];
     const initialBizPhotos = rawPhotos.slice(0, 10).map((url, idx) => ({
       url,
@@ -364,20 +468,141 @@ export default function G360GbpPackagePanel({
       selectedForSite: true,
     }));
     setUserPhotos(initialBizPhotos);
-    const initialNiche =
-      activeBusiness?.category || activeBusiness?.primary_type_display_name || activeBusiness?.type || "";
-    setRealNiche(initialNiche);
-    setCustomDifferential(activeBusiness?.bio || activeBusiness?.description || "");
-    setCustomSearchTermsText("");
-    setCustomProductNamesText("");
-    setSelectedTone("comercial");
-    generatePackage(activeBusiness, {
-      useAi: true,
-      tone: "comercial",
-      realNiche: initialNiche,
-      customContext: activeBusiness?.bio || activeBusiness?.description || "",
-    });
+
+    const storageKey = getBizStorageKey(activeBusiness);
+    const hydrateOrGenerate = async () => {
+      // 1. Check localStorage first for instant zero-loss reload (F5)
+      try {
+        const localRaw = localStorage.getItem(storageKey);
+        if (localRaw) {
+          const parsedLocal = JSON.parse(localRaw);
+          if (parsedLocal?.pkg && parsedLocal.pkg.businessName) {
+            if (cancelled) return;
+            setPkg(parsedLocal.pkg);
+            setRealNiche(
+              parsedLocal.realNiche ||
+                parsedLocal.pkg.realNiche ||
+                activeBusiness?.category ||
+                parsedLocal.pkg.primaryCategory ||
+                ""
+            );
+            setCustomDifferential(
+              parsedLocal.customContext !== undefined
+                ? parsedLocal.customContext
+                : parsedLocal.pkg.customContext || activeBusiness?.bio || ""
+            );
+            const savedTerms = Array.isArray(parsedLocal.customSearchTerms)
+              ? parsedLocal.customSearchTerms
+              : Array.isArray(parsedLocal.pkg.customSearchTerms)
+              ? parsedLocal.pkg.customSearchTerms
+              : (parsedLocal.pkg.services || []).map((s) => s.name);
+            const savedProds = Array.isArray(parsedLocal.customProductNames)
+              ? parsedLocal.customProductNames
+              : Array.isArray(parsedLocal.pkg.customProductNames)
+              ? parsedLocal.pkg.customProductNames
+              : (parsedLocal.pkg.products || []).map((p) => p.name);
+            setCustomSearchTermsText(savedTerms.map(cleanLineItem).filter(Boolean).join("\n"));
+            setCustomProductNamesText(savedProds.map(cleanLineItem).filter(Boolean).join("\n"));
+            setSelectedTone(parsedLocal.tone || parsedLocal.pkg.tone || "comercial");
+            setHydratedBizKey(storageKey);
+            return;
+          }
+        }
+      } catch {
+        // Fallback to server check
+      }
+
+      // 2. Check server persisted draft (/g360/gbp-package/saved)
+      try {
+        const { data } = await api.get("/g360/gbp-package/saved", {
+          params: {
+            businessName: activeBusiness?.name || "",
+            placeId: activeBusiness?.place_id || "",
+          },
+        });
+        if (!cancelled && data?.pkg && data.pkg.businessName) {
+          const srvPkg = data.pkg;
+          setPkg(srvPkg);
+          const srvNiche =
+            srvPkg.realNiche ||
+            activeBusiness?.category ||
+            srvPkg.primaryCategory ||
+            "";
+          const srvCtx =
+            srvPkg.customContext !== undefined
+              ? srvPkg.customContext
+              : activeBusiness?.bio || activeBusiness?.description || "";
+          const srvTerms = Array.isArray(srvPkg.customSearchTerms)
+            ? srvPkg.customSearchTerms
+            : (srvPkg.services || []).map((s) => s.name);
+          const srvProds = Array.isArray(srvPkg.customProductNames)
+            ? srvPkg.customProductNames
+            : (srvPkg.products || []).map((p) => p.name);
+
+          setRealNiche(srvNiche);
+          setCustomDifferential(srvCtx);
+          setCustomSearchTermsText(srvTerms.map(cleanLineItem).filter(Boolean).join("\n"));
+          setCustomProductNamesText(srvProds.map(cleanLineItem).filter(Boolean).join("\n"));
+          setSelectedTone(srvPkg.tone || "comercial");
+          setHydratedBizKey(storageKey);
+          return;
+        }
+      } catch {
+        // Ignore and generate fresh
+      }
+
+      if (cancelled) return;
+      // 3. Only generate default package if no saved state exists for this business
+      setPkg(null);
+      const initialNiche =
+        activeBusiness?.category || activeBusiness?.primary_type_display_name || activeBusiness?.type || "";
+      const initialBio = activeBusiness?.bio || activeBusiness?.description || "";
+      setRealNiche(initialNiche);
+      setCustomDifferential(initialBio);
+      setCustomSearchTermsText("");
+      setCustomProductNamesText("");
+      setSelectedTone("comercial");
+      await generatePackage(activeBusiness, {
+        useAi: true,
+        tone: "comercial",
+        realNiche: initialNiche,
+        customContext: initialBio,
+      });
+      if (!cancelled) {
+        setHydratedBizKey(storageKey);
+      }
+    };
+
+    hydrateOrGenerate();
+    return () => {
+      cancelled = true;
+    };
   }, [activeBusiness?.name, activeBusiness?.place_id]);
+
+  // Auto-save edits to Box 1, Box 2, Box 3, Box 4, and pkg so F5 reload never loses user input
+  useEffect(() => {
+    const currentKey = getBizStorageKey(activeBusiness);
+    if (!pkg || hydratedBizKey !== currentKey) return;
+    const timer = setTimeout(() => {
+      persistDraftState(activeBusiness, {
+        realNiche,
+        customContext: customDifferential,
+        customSearchTerms: customSearchTermsText.split(/\r?\n/).map(cleanLineItem).filter(Boolean),
+        customProductNames: customProductNamesText.split(/\r?\n/).map(cleanLineItem).filter(Boolean),
+        tone: selectedTone,
+        pkg,
+      });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [
+    hydratedBizKey,
+    realNiche,
+    customDifferential,
+    customSearchTermsText,
+    customProductNamesText,
+    selectedTone,
+    pkg,
+  ]);
 
   // Keep userPhotos synced if activeBusiness.photos gets enriched with more photos
   useEffect(() => {
@@ -518,6 +743,15 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
 
   return (
     <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-[#7C3AED] text-[13px] font-bold cursor-pointer transition-colors shadow-sm"
+        >
+          ← Voltar para Auditoria
+        </button>
+      )}
       {/* HEADER: Active Profile + Google Business Profile API Sync & Export */}
       <section className={`rounded-2xl p-5 sm:p-6 ${cardClass}`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-inherit">
@@ -541,16 +775,6 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={runAiHealthTest}
-              className="px-3.5 py-2.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[12.5px] font-extrabold flex items-center gap-2 transition-colors cursor-pointer"
-              data-testid="test-ai-connection-btn"
-            >
-              <Sparkles size={15} />
-              <span>Testar Conexão das IAs</span>
-            </button>
-
             <button
               type="button"
               onClick={handleDownloadPackageMarkdown}
@@ -578,17 +802,15 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
           </div>
         </div>
 
-        {/* NICHO REAL + DESCOBERTA AUTOMÁTICA NO GOOGLE COM IA + 3 CAIXAS ESTRUTURADAS */}
+        {/* NICHO REAL + PESQUISADOR MODO IA INTERNO + 4 CAIXAS ESTRUTURADAS E PERSISTENTES */}
         <div className={`mt-4 p-4 sm:p-5 rounded-xl border ${borderCol} ${subtleBg} space-y-4`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 text-[12px] font-extrabold uppercase tracking-wider text-[#7C3AED]">
               <Sparkles size={14} />
-              <span>Inteligência do Negócio · Pesquisa no Google + 20 Termos Locais + 6 Produtos</span>
-              {pkg.aiProviderUsed && (
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold">
-                  Motor Ativo: {pkg.aiProviderUsed}
-                </span>
-              )}
+              <span>Central Modo IA Integrada · Bio Completa + 20 Termos Locais + 6 Categorias de Produtos</span>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10.5px] font-bold">
+                Salvamento Automático Ativo
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {pkg.websiteUrl && (
@@ -609,16 +831,61 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
               <button
                 type="button"
                 disabled={discoveringWeb || loading}
-                onClick={handleDiscoverFromWeb}
+                onClick={() => handleDiscoverFromWeb("all")}
                 className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-[12.5px] font-extrabold flex items-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
                 data-testid="gbp-discover-web-btn"
               >
                 <Sparkles size={14} className={discoveringWeb ? "animate-spin" : ""} />
                 <span>
                   {discoveringWeb
-                    ? "Pesquisando Empresa no Google..."
+                    ? "Pesquisando Empresa no Modo IA..."
                     : "Descobrir Tudo no Google com IA (Bio + 20 Termos + 6 Produtos)"}
                 </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Barra Rápida Modo IA Interno (Sem precisar sair para outra aba) */}
+          <div className={`p-3 rounded-xl border ${borderCol} flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 ${dark ? "bg-[#151126]/70" : "bg-white/90"}`}>
+            <div className="flex-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={modoIaCustomPrompt}
+                onChange={(e) => setModoIaCustomPrompt(e.target.value)}
+                placeholder={`Instrução opcional para o Modo IA interno (ex: focar em câmaras frias, assistência técnica e peças em ${pkg.city})...`}
+                className={`w-full px-3 py-1.5 rounded-lg border text-[12px] outline-none focus:border-[#7C3AED] ${
+                  dark ? "bg-[#0B0914] border-white/15 text-white" : "bg-[#FBF9FE] border-purple-900/15 text-[#120E24]"
+                }`}
+                data-testid="gbp-modo-ia-prompt-input"
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                disabled={discoveringWeb || loading}
+                onClick={() => handleDiscoverFromWeb("bio")}
+                className={`px-3 py-1.5 rounded-lg border text-[11.5px] font-bold cursor-pointer hover:border-[#7C3AED] disabled:opacity-50 ${borderCol}`}
+                data-testid="gbp-modo-ia-bio-btn"
+              >
+                Gerar Só Bio Completa (~2.500c sem Emojis)
+              </button>
+              <button
+                type="button"
+                disabled={discoveringWeb || loading}
+                onClick={() => handleDiscoverFromWeb("terms")}
+                className={`px-3 py-1.5 rounded-lg border text-[11.5px] font-bold cursor-pointer hover:border-[#7C3AED] disabled:opacity-50 ${borderCol}`}
+                data-testid="gbp-modo-ia-terms-btn"
+              >
+                Gerar Só 20 Termos (Sem Número)
+              </button>
+              <button
+                type="button"
+                disabled={discoveringWeb || loading}
+                onClick={() => handleDiscoverFromWeb("products")}
+                className={`px-3 py-1.5 rounded-lg border text-[11.5px] font-bold cursor-pointer hover:border-[#7C3AED] disabled:opacity-50 ${borderCol}`}
+                data-testid="gbp-modo-ia-products-btn"
+              >
+                Gerar Só 6 Categorias de Produtos
               </button>
             </div>
           </div>
@@ -634,7 +901,7 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
                   type="text"
                   value={realNiche}
                   onChange={(e) => setRealNiche(e.target.value)}
-                  placeholder="Ex: Pamonharia, Marcenaria Sob Medida, Clínica Odontológica..."
+                  placeholder="Ex: Fornecedor de refrigeradores comerciais, Marcenaria Sob Medida..."
                   className={`w-full px-3.5 py-2.5 rounded-xl border text-[13px] font-semibold outline-none focus:border-[#7C3AED] ${
                     dark ? "bg-[#151126] border-white/15 text-white" : "bg-white border-purple-900/15 text-[#120E24]"
                   }`}
@@ -647,14 +914,19 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
             </div>
 
             <div className="lg:col-span-8">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-[#7C3AED] block mb-1">
-                2. Resumo Comercial / Diferenciais da Empresa (Alimenta Descrição 750c e Textos)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-[#7C3AED]">
+                  2. Resumo Comercial / Diferenciais e História da Empresa (Sem Limite de Caracteres)
+                </label>
+                <span className={`text-[11px] font-mono font-bold ${mutedText}`}>
+                  {(customDifferential || "").length} caracteres
+                </span>
+              </div>
               <textarea
-                rows={3}
+                rows={5}
                 value={customDifferential}
                 onChange={(e) => setCustomDifferential(e.target.value)}
-                placeholder="Descreva o que a empresa vende, diferenciais, tradição ou clique em 'Descobrir Tudo no Google com IA'..."
+                placeholder="Descreva detalhadamente o que a empresa vende, marcas, tipos de equipamentos, história, diferenciais de atendimento, peças, serviços ou clique em 'Descobrir Tudo no Google com IA'..."
                 className={`w-full p-3 rounded-xl border text-[13px] leading-relaxed outline-none focus:border-[#7C3AED] ${
                   dark ? "bg-[#151126] border-white/15 text-white" : "bg-white border-purple-900/15 text-[#120E24]"
                 }`}
@@ -677,8 +949,14 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
               <textarea
                 rows={4}
                 value={customSearchTermsText}
-                onChange={(e) => setCustomSearchTermsText(e.target.value)}
-                placeholder={`Ex:\nPamonha Tradicional em ${pkg.city}\nPamonha à Moda com Queijo e Linguiça\nCurau de Milho Cremoso\nChica Doido Assada...`}
+                onChange={(e) => {
+                  const cleaned = e.target.value
+                    .split(/\r?\n/)
+                    .map((line) => line.replace(/^[•\-\*\u2022\d]+[\.\)\-\s]+/, ""))
+                    .join("\n");
+                  setCustomSearchTermsText(cleaned);
+                }}
+                placeholder={`Digite ou cole 1 termo local por linha (sem numeração) para ${pkg.businessName} em ${pkg.city}...`}
                 className={`w-full p-3 rounded-xl border text-[12.5px] leading-relaxed outline-none focus:border-[#7C3AED] ${
                   dark ? "bg-[#151126] border-white/15 text-white" : "bg-white border-purple-900/15 text-[#120E24]"
                 }`}
@@ -699,8 +977,14 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
                 <textarea
                   rows={4}
                   value={customProductNamesText}
-                  onChange={(e) => setCustomProductNamesText(e.target.value)}
-                  placeholder={`Ex:\nPamonha de Sal com Queijo Minas\nPamonha Doce Tradicional\nPamonha à Moda da Casa...`}
+                  onChange={(e) => {
+                    const cleaned = e.target.value
+                      .split(/\r?\n/)
+                      .map((line) => line.replace(/^[•\-\*\u2022\d]+[\.\)\-\s]+/, ""))
+                      .join("\n");
+                    setCustomProductNamesText(cleaned);
+                  }}
+                  placeholder={`Digite ou cole as 6 categorias principais de produtos (1 por linha, apenas os nomes)...`}
                   className={`w-full p-3 rounded-xl border text-[12.5px] leading-relaxed outline-none focus:border-[#7C3AED] ${
                     dark ? "bg-[#151126] border-white/15 text-white" : "bg-white border-purple-900/15 text-[#120E24]"
                   }`}
@@ -712,7 +996,7 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             <span className={`text-[11.5px] ${mutedText}`}>
-              Ao clicar em <strong>Aplicar e Gerar Pacote Completo</strong>, os 20 termos alimentam a Aba 02 (com descrições de até 300c) e a Aba 04 (11 publicações), e os 6 produtos alimentam a Aba 03.
+              Ao clicar em <strong>Aplicar Contexto, 20 Termos e 6 Produtos</strong>, os 20 termos alimentam a Aba 02 (até 300c) e a Aba 04 (11 publicações), e os 6 produtos alimentam a Aba 03. Tudo fica salvo mesmo se você atualizar a página (F5).
             </span>
             <button
               type="button"
@@ -1043,9 +1327,19 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
                       <span className="text-[11px] font-mono font-bold text-[#7C3AED]">
                         SERVICO #{String(idx + 1).padStart(2, "0")} · {svc.category || pkg.primaryCategory}
                       </span>
-                      <span className={`font-mono text-[11px] tabular-nums ${(svc.description || "").length > 300 ? "text-red-500 font-bold" : mutedText}`}>
-                        {(svc.description || "").length}/300c
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-mono text-[11px] tabular-nums ${(svc.description || "").length > 300 ? "text-red-500 font-bold" : mutedText}`}>
+                          {(svc.description || "").length}/300c
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteItem("service", idx)}
+                          title="Excluir este serviço/termo"
+                          className="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
 
                     <div>
@@ -1134,6 +1428,15 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <button
                 type="button"
+                onClick={handleAddProduct}
+                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-[13px] font-bold cursor-pointer flex items-center gap-1.5 shadow-sm"
+                data-testid="add-custom-product-btn"
+              >
+                <Plus size={14} />
+                <span>Adicionar Produto</span>
+              </button>
+              <button
+                type="button"
                 disabled={regeneratingBatch === "products"}
                 onClick={() => handleRegenerateBatch("products")}
                 className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-[13px] font-extrabold cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
@@ -1176,9 +1479,19 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
                       <span className="text-[11px] font-bold uppercase tracking-wider text-[#7C3AED]">
                         {prod.category}
                       </span>
-                      <span className="text-[11px] font-semibold text-[#34A853] bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
-                        {prod.priceLabel}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-[#34A853] bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                          {prod.priceLabel}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteItem("product", idx)}
+                          title="Excluir este produto"
+                          className="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
 
                     <div>
@@ -1756,95 +2069,6 @@ ${(pkg.photoSeoNames || []).map((f) => `- ${f}`).join("\n")}
               <Layers size={18} />
               <span>Construir Site Express Agora com estes Textos, Produtos e Fotos</span>
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: TESTADOR DE CONEXÃO DAS IAs EM TEMPO REAL */}
-      {aiHealthModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`w-full max-w-2xl rounded-2xl p-6 space-y-4 ${cardClass}`}>
-            <div className="flex items-center justify-between border-b pb-3 border-inherit">
-              <div>
-                <div className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-500">
-                  Diagnóstico Ao Vivo · Teste Real de APIs no Servidor
-                </div>
-                <h3 className="text-[19px] font-extrabold mt-0.5">Status e Conexão dos Motores de IA</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAiHealthModalOpen(false)}
-                className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold cursor-pointer ${borderCol}`}
-              >
-                Fechar
-              </button>
-            </div>
-
-            {aiHealthLoading ? (
-              <div className="py-10 text-center space-y-3">
-                <RefreshCw size={28} className="animate-spin mx-auto text-[#7C3AED]" />
-                <p className="text-[14px] font-bold">
-                  Disparando requisição real de teste para Gemini, Groq, OpenRouter, NVIDIA NIM e Google Maps...
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[13px]">
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                    Motores Conectados e Ativos Agora: {aiHealthData?.activeCount || 0} de {aiHealthData?.totalTested || 6}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={runAiHealthTest}
-                    className="px-3 py-1 rounded-lg bg-[#7C3AED] text-white text-[11.5px] font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <RefreshCw size={12} /> Testar Novamente
-                  </button>
-                </div>
-
-                <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-                  {(aiHealthData?.providers || []).map((prov) => (
-                    <div
-                      key={prov.id}
-                      className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${borderCol} ${subtleBg}`}
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`w-2.5 h-2.5 rounded-full ${
-                              prov.active ? "bg-emerald-500" : "bg-red-500"
-                            }`}
-                          />
-                          <span className="font-extrabold text-[13.5px]">{prov.name}</span>
-                          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-500/10 text-[#7C3AED]">
-                            {prov.model}
-                          </span>
-                        </div>
-                        <div className={`text-[11.5px] ${mutedText}`}>
-                          {prov.active
-                            ? `Resposta recebida: "${prov.sampleOutput}"`
-                            : `Falha: ${prov.error || "Não respondeu"}`}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-mono text-[11.5px] px-2.5 py-1 rounded-lg border border-inherit">
-                          {prov.latencyMs} ms
-                        </span>
-                        <span
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold uppercase ${
-                            prov.active
-                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                              : "bg-red-500/15 text-red-500"
-                          }`}
-                        >
-                          {prov.active ? "ONLINE" : "OFFLINE"}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}

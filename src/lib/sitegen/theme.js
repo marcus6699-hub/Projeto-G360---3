@@ -76,6 +76,11 @@ export const PALETTES = {
       name: "Pet Shop, Agro & Móveis",
       vars: { pri: "#0B1512", sec: "#059669", acc: "#059669", bg: "#F6FBF8", ink: "#0B1512", soft: "#E2F3EB" },
     },
+    {
+      id: "novolar-red-navy",
+      name: "Móveis & Colchões Novo Lar (Navy & Rubro)",
+      vars: { pri: "#0F172A", sec: "#DC2626", acc: "#E11D48", bg: "#FFFFFF", ink: "#0F172A", soft: "#F8FAFC" },
+    },
   ],
 };
 
@@ -304,6 +309,25 @@ export const SITE_TEMPLATES = [
       "Destaque de oferta + Mapa e rotas Google Maps / Waze",
     ],
     colors: ["#111827", "#2563EB", "#60A5FA", "#F9FAFB"],
+  },
+  {
+    id: "novolar-moveis",
+    name: "Móveis, Colchões & Ambientes (Estilo Novo Lar)",
+    subtitle: "Lojas de Móveis, Colchões, Decoração, Planejados & Eletros",
+    badge: "Modelo #08 · Mega Vitrine",
+    sourceFile: "novolar-moveis",
+    archetype: "produtos",
+    paletteId: "novolar-red-navy",
+    fontId: "outfit",
+    description:
+      "Design imersivo para grandes lojas de móveis e ambientes. Traz Hero cinematográfico com carrossel full-screen, degradê lateral e chamadas comerciais de alto impacto ('Seu lar com mais conforto e qualidade'), barra de 4 diferenciais (Atendimento, Variedade, Pagamento facilitado, Entrega rápida), vitrine de ambientes e destaque para Colchões & Camas Box.",
+    highlights: [
+      "Hero Full-Width com Carrossel de Ambientes & Sofás e Degradê Lateral",
+      "Barra de 4 Diferenciais Comerciais com ícones elegantes",
+      "Vitrine de Ambientes (Sofás, Colchões, Mesas, Cozinhas Planejadas)",
+      "Seção 'Conheça a Loja por Dentro' com fotos reais e Mapa Google",
+    ],
+    colors: ["#0F172A", "#DC2626", "#F87171", "#FFFFFF"],
   },
 ];
 

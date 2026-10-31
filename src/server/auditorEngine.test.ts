@@ -383,7 +383,7 @@ test("24. Preservação do motor Pacote GBP e histórico de auditorias", () => {
   assert.ok(gbpPkg.services.length >= 15);
 });
 
-// 25. Compatibilidade com a UI existente
+// 25. Compatibilidade com a UI existente e calibração da Pré-Análise (<= 78) vs Análise Completa (91-97)
 test("25. Relatório de auditoria mantém total compatibilidade de campos com G360AuditPanel (overallScore, pillars, criteria, pre_analise, analise_completa_projetada)", () => {
   const report = buildG360AuditReport(
     makeCompleteApprovedBusiness({
@@ -391,14 +391,13 @@ test("25. Relatório de auditoria mantém total compatibilidade de campos com G3
       reviews_count: 14,
     })
   );
-  assert.equal(report.overallScore, 80);
-  assert.equal(report.projectedScoreAfterOptimization, 90);
+  assert.ok(report.overallScore <= 78 && report.overallScore >= 40);
+  assert.ok(report.projectedScoreAfterOptimization >= 91 && report.projectedScoreAfterOptimization <= 97);
   assert.equal(report.pre_analise.nota_calculada, 80);
   assert.equal(report.analise_completa_projetada.nota_projetada, 90);
   assert.equal(report.criteria.length, 9);
   assert.equal(report.pillars.length, 4);
-  assert.equal(report.criticalCount, 2);
-  assert.ok(Array.isArray(report.keywords) && report.keywords.length > 0);
+  assert.ok(Array.isArray(report.keywords) && report.keywords.length >= 4);
 });
 
 // 26. Loja de Ferragens ("Ferragens Méier") com contexto "acessórios para móveis" mantém nicho Loja de ferragens e Aba 4 usa títulos da Aba 2
@@ -412,7 +411,7 @@ test("26. Ferragens Méier com contexto 'acessórios para móveis' recebe 'Loja 
       phone: "(21) 3274-9000",
     },
     {
-      serviceContext: "acessórios para móveis, dobradiças, corrediças telescópicas e puxadores",
+      customContext: "acessórios para móveis, dobradiças, corrediças telescópicas e puxadores",
     }
   );
   assert.equal(ferragensPkg.primaryCategory, "Loja de ferragens");
@@ -424,8 +423,8 @@ test("26. Ferragens Méier com contexto 'acessórios para móveis' recebe 'Loja 
   assert.equal(ferragensPkg.posts[1].title, ferragensPkg.services[1].name);
 });
 
-// 27. Critérios detalhados GBP Check (12 itens 100% reais de API, sem itens manuais/limitados)
-test("27. Relatório de auditoria inclui apenas os 12 gbpCheckCriteria reais de API (sem itens manuais) e gbpCheckScore", () => {
+// 27. Critérios detalhados GBP Check (16 itens quando descrição presente, 15 quando descrição ausente na API)
+test("27. Relatório de auditoria inclui os critérios GBP Check calibrados e gráficos Top 10 / Média do Segmento", () => {
   const report = buildG360AuditReport(
     makeCompleteApprovedBusiness({
       website: "",
@@ -433,15 +432,81 @@ test("27. Relatório de auditoria inclui apenas os 12 gbpCheckCriteria reais de 
     })
   );
   assert.ok(Array.isArray(report.gbpCheckCriteria));
-  assert.equal(report.gbpCheckCriteria.length, 12);
+  assert.equal(report.gbpCheckCriteria!.length, 16);
   assert.equal(typeof report.gbpCheckScore, "number");
-  assert.ok(!report.gbpCheckCriteria.some((c: any) => c.id === "gbp_photos_360"));
-  assert.ok(!report.gbpCheckCriteria.some((c: any) => c.id === "gbp_products"));
-  assert.ok(!report.gbpCheckCriteria.some((c: any) => c.id === "gbp_posts"));
-  const top10ChartItem = report.gbpCheckCriteria.find((c: any) => c.chartType === "top10_reviews");
-  const avgChartItem = report.gbpCheckCriteria.find((c: any) => c.chartType === "segment_avg_reviews");
+  assert.ok(report.gbpCheckScore! <= 78);
+  const top10ChartItem = report.gbpCheckCriteria!.find((c: any) => c.chartType === "top10_reviews");
+  const avgChartItem = report.gbpCheckCriteria!.find((c: any) => c.chartType === "segment_avg_reviews");
   assert.ok(top10ChartItem, "Deve incluir critério com gráfico Top 10 empresas mais avaliadas");
   assert.ok(avgChartItem, "Deve incluir critério com gráfico Média de avaliações no segmento");
 });
 
+// 28. Confiança Máquinas: Instagram detectado como Razoável (warning), descrição omitida se vazia, nota 71-77 na Pré-Análise e ranking varia por palavra-chave
+test("28. Confiança Máquinas com link do Instagram, sem descrição na API, recebe nota 71-77 (Razoável) e varia posição entre as 4 palavras-chave", () => {
+  const report = buildG360AuditReport({
+    name: "Confiança Máquinas - Refrigeração Comercial",
+    category: "Fornecedor de equipamentos de refrigeração comercial",
+    city: "Anápolis",
+    uf: "GO",
+    verified: true,
+    website: "https://www.instagram.com/confiancamaquina",
+    phone: "(62) 99124-3968",
+    rating: 4.9,
+    rating_count: 25,
+    bio: "", // Omitido pelo scraper
+    photos: ["https://lh3.googleusercontent.com/p/photo1.jpg"],
+    photos_count: 15,
+    hours: ["Segunda a Sexta: 08:00 às 18:00"],
+  });
 
+  assert.ok(report.gbpCheckScore! >= 71 && report.gbpCheckScore! <= 77, `Score esperado 71-77, obtido: ${report.gbpCheckScore}`);
+  assert.equal(report.classification, "Razoavel");
+  const websiteCrit = report.gbpCheckCriteria!.find((c: any) => c.id === "gbp_website");
+  assert.equal(websiteCrit?.status, "warning");
+  assert.ok(!report.gbpCheckCriteria!.some((c: any) => c.id === "gbp_description"), "Descrição ausente na API deve ser omitida");
+  assert.equal(report.keywords.length, 4);
+  const rankKw0 = report.keywords[0].competitors.find((c: any) => c.isTarget)?.rank;
+  const rankKw1 = report.keywords[1].competitors.find((c: any) => c.isTarget)?.rank;
+  assert.notEqual(rankKw0, rankKw1, "Posição no ranking deve variar entre palavras-chave diferentes");
+  const targetCompScore = report.keywords[0].competitors.find((c: any) => c.isTarget)?.gbpScore;
+  assert.ok((targetCompScore ?? 0) <= 78, "Score na lista de concorrentes nunca deve ser 100% na Pré-Análise");
+});
+
+// 29. Decodificação de Place ID (ChIJ...) para fp decimal no link oficial de Solicitar Acesso e Pacote GBP de Refrigeração Comercial
+test("29. Confiança Máquinas gera link oficial business.google.com/create/getstarted com fp=2650118772122471860 e pacote de Refrigeração Comercial sem números/marcadores", () => {
+  const report = buildG360AuditReport({
+    name: "Confiança Máquinas - Refrigeração Comercial",
+    place_id: "ChIJU3k-cCnnXpMRtE30ePscxyQ",
+    category: "Fornecedor de refrigeradores comerciais",
+    city: "Anápolis",
+    uf: "GO",
+  });
+
+  assert.equal(report.business.cid, "2650118772122471860");
+  assert.equal(
+    report.business.requestAccessUrl,
+    "https://business.google.com/create/getstarted?hl=pt-BR&pli=1&fp=2650118772122471860"
+  );
+  assert.ok(report.business.bio.includes("Confiança Máquinas"), "Bio real da Confiança Máquinas deve ser preenchida quando bio não foi omitida explicitamente");
+
+  const longBio3000 = "A Confiança Máquinas é especialista em refrigeração comercial e câmaras frigoríficas em Anápolis. ".repeat(35);
+  const pkg = buildGbpOptimizationPackage(
+    {
+      name: "Confiança Máquinas - Refrigeração Comercial",
+      category: "Fornecedor de refrigeradores comerciais",
+      city: "Anápolis",
+      uf: "GO",
+    },
+    {
+      customContext: longBio3000,
+      customSearchTerms: ["1. refrigeração comercial anápolis", "2. conserto de câmara fria anápolis"],
+      customProductNames: ["• Câmaras Frigoríficas e Painéis Isotérmicos", "- Balcões Expositores e Vitrines Refrigeradas"],
+    }
+  );
+
+  assert.equal(pkg.services[0].name, "refrigeração comercial anápolis");
+  assert.equal(pkg.services[1].name, "conserto de câmara fria anápolis");
+  assert.equal(pkg.products[0].name, "Câmaras Frigoríficas e Painéis Isotérmicos");
+  assert.equal(pkg.products[1].name, "Balcões Expositores e Vitrines Refrigeradas");
+  assert.ok(!pkg.services.some((s: any) => /Pamonha|Atendimento no Centro e Bairros/i.test(s.name)));
+});

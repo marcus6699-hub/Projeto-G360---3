@@ -132,6 +132,7 @@ function ScopedG360CrmFinancePanel({
   initialSubView = "kanban", // "kanban" | "proposal" | "contract"
   onOpenGbpPackage,
   onOpenSiteExpress,
+  onBack,
 }) {
   // Never read or auto-assign old unscoped records; their owner is unknown.
   // Namespacing prevents accidental cross-account reuse, not malicious local access.
@@ -973,6 +974,15 @@ function ScopedG360CrmFinancePanel({
 
   return (
     <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-[#7C3AED] text-[13px] font-bold cursor-pointer transition-colors shadow-sm"
+        >
+          ← Voltar para Auditoria
+        </button>
+      )}
       {/* TOP BAR: Navigation between Kanban CRM, 3-Package Proposal Generator, and Contract Generator */}
       <section className={`rounded-2xl p-5 sm:p-6 ${cardClass}`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

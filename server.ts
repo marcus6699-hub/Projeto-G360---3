@@ -1234,10 +1234,79 @@ app.get("/api/places/autocomplete", async (req, res) => {
   const cacheKey = `autocomplete::${q.toLowerCase()}`;
   const cachedSuggestions = costGuard.getCachedBusinessSearch(cacheKey);
   if (Array.isArray(cachedSuggestions) && cachedSuggestions.length > 0) {
+    for (const s of cachedSuggestions) {
+      if (s?.place_id && !placesCache.has(s.place_id)) {
+        placesCache.set(s.place_id, { _normalized: s });
+      }
+    }
     return res.json({ suggestions: cachedSuggestions, cached: true });
   }
 
-  // 1. Try Outscraper v3 Free Tier FIRST (Zero Google Cloud Billing + returns direct photo URLs!)
+  // 1. Try Ultra-Fast Serper Places Search FIRST (~350ms latency, Zero Google Cloud Billing!)
+  const serperKey = (process.env.SERPER_API_KEY || "").trim();
+  const serperLimit = costGuard.checkLimit("serper");
+  if (serperKey.length > 10 && serperLimit.allowed) {
+    try {
+      const sRes = await fetch("https://google.serper.dev/places", {
+        method: "POST",
+        headers: {
+          "X-API-KEY": serperKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ q, gl: "br", hl: "pt-br" }),
+        signal: AbortSignal.timeout(2400),
+      });
+      if (sRes.ok) {
+        costGuard.recordCall("serper");
+        const sData: any = await sRes.json();
+        const places = Array.isArray(sData?.places) ? sData.places : [];
+        const suggestions = places
+          .filter((p: any) => p && p.title)
+          .slice(0, 6)
+          .map((p: any) => {
+            const parsedLoc = parseCityUfFromAddress(p.address || "");
+            const pid = p.cid ? `serper::${p.cid}` : `serper::${encodeURIComponent(p.title)}`;
+            const thumb = p.thumbnailUrl || "";
+            const item = {
+              place_id: pid,
+              cid: p.cid || "",
+              source: "serper-places",
+              name: p.title,
+              category: p.category || "Negócio Local",
+              categories: p.category ? [p.category] : ["Negócio Local"],
+              city: parsedLoc.city || "Anápolis",
+              uf: parsedLoc.uf || "GO",
+              neighborhood: parsedLoc.neighborhood || "",
+              address: p.address || `${parsedLoc.city || "Anápolis"} - ${parsedLoc.uf || "GO"}`,
+              phone: p.phoneNumber || "",
+              website: p.website || "",
+              bio: p.description || "",
+              verified: true,
+              lat: Number(p.latitude) || undefined,
+              lng: Number(p.longitude) || undefined,
+              rating: Number(p.rating) || 4.8,
+              rating_count: Number(p.ratingCount) || 0,
+              logo: "",
+              photo:
+                thumb ||
+                svgBanner(p.title, p.category || "Negócio Local", "#0F172A", "#1E3A8A", "#38BDF8", parsedLoc.city || "Anápolis"),
+              photos: thumb ? [thumb] : [],
+              photos_count: thumb ? 1 : 0,
+            };
+            placesCache.set(pid, { _serper: p, _normalized: item });
+            return item;
+          });
+        if (suggestions.length > 0) {
+          costGuard.setCachedBusinessSearch(cacheKey, suggestions);
+          return res.json({ suggestions });
+        }
+      }
+    } catch {
+      // Fallback to Outscraper
+    }
+  }
+
+  // 1b. Try Outscraper v3 Free Tier Fallback (Zero Google Cloud Billing + returns direct photo URLs!)
   const outscraperLimit = costGuard.checkLimit("outscraper");
   if (hasOutscraperKey() && outscraperLimit.allowed) {
     try {
@@ -1245,7 +1314,7 @@ app.get("/api/places/autocomplete", async (req, res) => {
       const outUrl = `https://api.app.outscraper.com/maps/search-v3?query=${encodeURIComponent(q)}&limit=6&language=pt&region=BR&async=false`;
       const outRes = await fetch(outUrl, {
         headers: { "X-API-KEY": outKey },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5500),
       });
       if (outRes.ok) {
         costGuard.recordCall("outscraper");
@@ -1256,32 +1325,44 @@ app.get("/api/places/autocomplete", async (req, res) => {
           .map((r: any) => {
             const parsedLoc = parseCityUfFromAddress(r.full_address || r.address || "");
             const pid = r.place_id || `outscraper::${encodeURIComponent(r.name)}`;
-            placesCache.set(pid, { _outscraper: r });
             const directPhotos = [r.photo, r.street_view, r.logo].filter(Boolean);
-            return {
+            const subtypesArr =
+              typeof r.subtypes === "string"
+                ? r.subtypes.split(",").map((s: string) => s.trim()).filter(Boolean)
+                : Array.isArray(r.subtypes)
+                ? r.subtypes
+                : [];
+            const item = {
               place_id: pid,
+              source: "outscraper-v3",
               name: r.name,
-              category: r.type || (Array.isArray(r.subtypes) ? r.subtypes[0] : "Negócio Local"),
-              city: r.city || parsedLoc.city || "Brasil",
-              uf: r.state_code || r.state || parsedLoc.uf || "",
+              category: r.type || subtypesArr[0] || "Negócio Local",
+              categories: subtypesArr.length > 0 ? subtypesArr : r.type ? [r.type] : ["Negócio Local"],
+              city: r.city || parsedLoc.city || "Anápolis",
+              uf: r.state_code || r.state || parsedLoc.uf || "GO",
               neighborhood: r.borough || parsedLoc.neighborhood || "",
-              address: r.full_address || r.address || `${r.city || parsedLoc.city} - ${r.state || parsedLoc.uf}`,
+              address: r.full_address || r.address || `${r.city || parsedLoc.city || "Anápolis"} - ${r.state_code || parsedLoc.uf || "GO"}`,
               phone: r.phone || "",
               website: r.site || r.website || "",
               bio: r.description || r.about?.summary || "",
-              verified: Boolean(r.verified),
+              verified: r.verified !== undefined ? Boolean(r.verified) : true,
+              hours: r.working_hours || r.hours || null,
+              reviews_per_score: r.reviews_per_score || null,
               lat: Number(r.latitude) || undefined,
               lng: Number(r.longitude) || undefined,
               rating: Number(r.rating) || 4.8,
               rating_count: Number(r.reviews) || 0,
+              logo: r.logo || "",
               photo:
                 r.photo ||
                 r.street_view ||
                 r.logo ||
-                svgBanner(r.name, r.type || "Negócio Local", "#0F172A", "#1E3A8A", "#38BDF8", r.city || "Brasil"),
+                svgBanner(r.name, r.type || "Negócio Local", "#0F172A", "#1E3A8A", "#38BDF8", r.city || "Anápolis"),
               photos: directPhotos,
               photos_count: Number(r.photos_count) || directPhotos.length || 1,
             };
+            placesCache.set(pid, { _outscraper: r, _normalized: item });
+            return item;
           });
         if (suggestions.length > 0) {
           costGuard.setCachedBusinessSearch(cacheKey, suggestions);
@@ -1369,21 +1450,30 @@ app.get("/api/places/autocomplete", async (req, res) => {
     }
   }
 
-  // 3. Smart Demo Search Fallback
+  // 3. Smart Search Fallback (ONLY matching items — never overwrite with unrelated demo businesses!)
   const norm = (s: string) =>
     s
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
   const terms = norm(q).split(/\s+/).filter(Boolean);
-  let matches = DEMO_BUSINESSES.filter((b) => {
+
+  // Check if any already-cached real businesses in placesCache match the user's terms
+  const cachedMatches: any[] = [];
+  for (const [, val] of placesCache.entries()) {
+    const cand = val?._normalized;
+    if (cand && cand.name) {
+      const hay = norm(`${cand.name} ${cand.category || ""} ${cand.city || ""} ${cand.address || ""}`);
+      if (terms.every((t) => hay.includes(t))) {
+        cachedMatches.push(cand);
+      }
+    }
+  }
+
+  const demoMatches = DEMO_BUSINESSES.filter((b) => {
     const hay = norm(`${b.name} ${b.category} ${b.city} ${b.uf} ${b.neighborhood}`);
     return terms.every((t) => hay.includes(t));
-  });
-  if (matches.length === 0) {
-    matches = DEMO_BUSINESSES.slice(0, 4);
-  }
-  const suggestions = matches.map((b) => ({
+  }).map((b) => ({
     place_id: b.place_id,
     name: b.name,
     category: b.category,
@@ -1397,6 +1487,8 @@ app.get("/api/places/autocomplete", async (req, res) => {
     photo: b.photos[0],
   }));
 
+  const suggestions = [...cachedMatches, ...demoMatches].slice(0, 6);
+
   const exactExists = suggestions.some((s) => norm(s.name) === norm(q));
   if (!exactExists && q.length >= 3) {
     const cleanQ = q.replace(/^https?:\/\/[^\s]+/i, "Link Google Maps").trim() || q;
@@ -1407,7 +1499,9 @@ app.get("/api/places/autocomplete", async (req, res) => {
       : /lavajat|lava-jat|lava jato|estetica automot/i.test(cleanQ)
       ? "Lava-Jato & Estética Automotiva"
       : /ateli|costur|reparo|alfaiat/i.test(cleanQ)
-      ? "Ateliê de Costura & Ajustes"
+      ? "Costureira"
+      : /pizza|pizzaria/i.test(cleanQ)
+      ? "Pizzaria"
       : /gas|botijao|ultragaz/i.test(cleanQ)
       ? "Revenda de Gás e Água"
       : /farmac|drogari/i.test(cleanQ)
@@ -1443,6 +1537,26 @@ app.get("/api/places/autocomplete", async (req, res) => {
 
   res.json({ suggestions });
 });
+
+function getNicheThumbnailPhoto(name: string, category: string): string {
+  const text = `${name} ${category}`.toLowerCase();
+  if (/farmac|drogari|droga|farma/.test(text)) {
+    return "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=400&q=85";
+  }
+  if (/pizz|restauran|lanchon|burger|hamburg|padar|confeitar|doceri|caf[eé]|sorvet|açaí|comida|marmita/.test(text)) {
+    return "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=400&q=85";
+  }
+  if (/moda|roupa|boutique|calcado|calcados|joia|semijoia|otica|vestuario|loja\b/.test(text)) {
+    return "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=400&q=85";
+  }
+  if (/barbei|cabelo|tatu|tattoo|estetic|beleza|salao|spa/.test(text)) {
+    return "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=400&q=85";
+  }
+  if (/moveis|colchao|decorac|planejad|cama/.test(text)) {
+    return "https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=400&q=85";
+  }
+  return "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=400&q=85";
+}
 
 function parseCityUfFromAddress(formattedAddress: string): { city: string; uf: string; neighborhood: string } {
   const addr = String(formattedAddress || "");
@@ -1920,15 +2034,89 @@ app.get("/api/places/details/:placeId", async (req, res) => {
   }
 
   if (placePayload) {
+    // Handle Outscraper or Serper cached payloads first so they NEVER fall back to "Empresa Verificada"!
+    if (placePayload._outscraper || placePayload._serper || placePayload._normalized) {
+      const r = placePayload._outscraper || {};
+      const norm = placePayload._normalized || {};
+      const bizName = r.name || norm.name || String(req.query.name || "").trim() || "Empresa Local";
+      const subtypesArr =
+        typeof r.subtypes === "string"
+          ? r.subtypes.split(",").map((s: string) => s.trim()).filter(Boolean)
+          : Array.isArray(r.subtypes)
+          ? r.subtypes
+          : Array.isArray(norm.categories)
+          ? norm.categories
+          : [];
+      const rawCategory = r.type || subtypesArr[0] || norm.category || "Negócio Local";
+      const parsedLoc = parseCityUfFromAddress(r.full_address || r.address || norm.address || "");
+      const city = r.city || norm.city || parsedLoc.city || "Anápolis";
+      const uf = r.state_code || r.state || norm.uf || parsedLoc.uf || "GO";
+      const neighborhood = r.borough || norm.neighborhood || parsedLoc.neighborhood || "";
+      const phone = r.phone || norm.phone || null;
+      const whatsapp = phone ? "55" + String(phone).replace(/\D/g, "") : "";
+      const directPhotos = [r.photo, r.street_view, r.logo, ...(Array.isArray(norm.photos) ? norm.photos : [])].filter(Boolean);
+      const uniquePhotos = Array.from(new Set(directPhotos));
+      const profile = buildSmartNicheProfile(bizName, rawCategory, city, uniquePhotos);
+
+      return res.json({
+        place_id: r.place_id || norm.place_id || placeId,
+        source: placePayload._outscraper ? "outscraper-v3" : "serper-places",
+        name: bizName,
+        category: rawCategory || profile.categoryLabel,
+        categories: subtypesArr.length > 0 ? subtypesArr : [rawCategory],
+        segment: profile.segment,
+        recommended_template: profile.recommended_template,
+        city,
+        uf,
+        neighborhood,
+        address: r.full_address || r.address || norm.address || `${city} - ${uf}`,
+        phone,
+        whatsapp,
+        rating:
+          r.rating !== undefined && r.rating !== null
+            ? Number(r.rating)
+            : norm.rating !== undefined
+            ? Number(norm.rating)
+            : 4.8,
+        rating_count:
+          r.reviews !== undefined && r.reviews !== null
+            ? Number(r.reviews)
+            : norm.rating_count !== undefined
+            ? Number(norm.rating_count)
+            : 0,
+        verified: r.verified !== undefined ? Boolean(r.verified) : norm.verified ?? true,
+        open_now: true,
+        hours_text: "",
+        hours: r.working_hours || r.hours || norm.hours || null,
+        reviews_per_score: r.reviews_per_score || norm.reviews_per_score || null,
+        lat: Number(r.latitude || norm.lat) || -16.3285,
+        lng: Number(r.longitude || norm.lng) || -48.9534,
+        website: r.site || r.website || norm.website || "",
+        price_level: "$$",
+        business_status: "OPERATIONAL",
+        features: profile.features,
+        logo: r.logo || norm.logo || "",
+        photos: uniquePhotos.length > 0 ? uniquePhotos : profile.photos,
+        photos_count: Number(r.photos_count || norm.photos_count) || uniquePhotos.length || 1,
+        items: profile.items,
+        reviews: [],
+        faqs: profile.faqs,
+        bio: r.description || r.about?.summary || norm.bio || "",
+        google_maps_uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${bizName} ${city} ${uf}`)}`,
+      });
+    }
+
     const p = placePayload;
-    const bizName = p.displayName?.text || "Empresa Verificada";
-    const rawCategory = p.primaryTypeDisplayName?.text || "Negócio Local";
-    const { city, uf, neighborhood } = parseCityUfFromAddress(p.formattedAddress || "");
-    const phone = p.nationalPhoneNumber || null;
-    const whatsapp = phone ? "55" + phone.replace(/\D/g, "") : "";
+    const bizName = p.displayName?.text || p.name || String(req.query.name || "").trim() || "Empresa Local";
+    const rawCategory = p.primaryTypeDisplayName?.text || p.category || "Negócio Local";
+    const { city, uf, neighborhood } = parseCityUfFromAddress(p.formattedAddress || p.address || "");
+    const phone = p.nationalPhoneNumber || p.phone || null;
+    const whatsapp = phone ? "55" + String(phone).replace(/\D/g, "") : "";
     const photos = (p.photos || [])
       .slice(0, 10)
-      .map((ph: any) => `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1400`);
+      .map((ph: any) =>
+        typeof ph === "string" ? ph : `/api/places/photo?name=${encodeURIComponent(ph.name)}&max_width_px=1400`
+      );
     const reviews = (p.reviews || []).map((r: any) => ({
       author: r.authorAttribution?.displayName || "Cliente",
       rating: r.rating || 5,
@@ -1979,7 +2167,7 @@ app.get("/api/places/details/:placeId", async (req, res) => {
     });
   }
 
-  res.json(DEMO_BUSINESSES[0]);
+  return res.status(404).json({ notFound: true });
 });
 
 const photoUriCache = new Map<string, string>();
@@ -3185,9 +3373,9 @@ app.get("/api/settings/ai", (_req, res) => {
     models: {
       gemini: ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3-flash-preview"],
       nvidia: [
-        "deepseek-ai/deepseek-v4.1-flash",
+        "google/diffusiongemma-26b-a4b-it",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
         "mistralai/mistral-large-4-1t-a52b",
-        "nv-mistralai/mistral-nemo-12b-instruct",
       ],
       openrouter: [
         "openrouter/auto",

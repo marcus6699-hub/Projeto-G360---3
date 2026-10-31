@@ -8,7 +8,7 @@ test("CostGuard allows requests within daily limits", () => {
 });
 
 test("CostGuard blocks requests when service is set to block in strict free mode", () => {
-  const check = costGuard.checkLimit("outscraper");
+  const check = costGuard.checkLimit("google_places");
   assert.equal(check.allowed, false);
   assert.match(check.reason || "", /bloqueado pelo Modo 100% Gratuito Estrito/);
 });

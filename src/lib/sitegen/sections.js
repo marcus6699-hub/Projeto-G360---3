@@ -405,6 +405,85 @@ export function hero(ctx) {
 </section>`;
   }
 
+  if (templateId === "novolar-moveis") {
+    const isFurniture = /móveis|moveis|colch|cama|sofá|sofa|cozinha|planejad|decora/i.test(`${b.name} ${b.category}`);
+    const defTitle = b.hero_title_override || (isFurniture ? "Seu lar com mais conforto e qualidade." : `${b.name}: Excelência e variedade em ${b.city || "sua cidade"}`);
+    const defSub = b.bio || "Sofás, colchões e móveis com design acolhedor para tornar cada momento em casa ainda melhor. Atendimento especializado e entrega rápida em Anápolis e região.";
+    const photos = b.photos && b.photos.length > 0 ? b.photos : [""];
+    const p0 = photos[0] || "";
+
+    return `
+<section class="sec-novolar-hero" id="inicio" style="position:relative;background:#0F172A;min-height:560px;display:flex;align-items:center;overflow:hidden;color:#fff;">
+  <div class="novolar-hero-bg" style="position:absolute;inset:0;z-index:1;background-image:url('${esc(p0)}');background-size:cover;background-position:center;"></div>
+  <div style="position:absolute;inset:0;z-index:2;background:linear-gradient(90deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0.85) 45%, rgba(15,23,42,0.30) 100%);"></div>
+  
+  <div class="wrap" style="position:relative;z-index:3;padding:64px 20px;max-width:1200px;width:100%;">
+    <div style="max-width:640px;display:flex;flex-direction:column;gap:20px;">
+      <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9999px;background:rgba(220,38,38,0.2);border:1px solid rgba(220,38,38,0.4);color:#FCA5A5;font-size:12px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;">
+        <span>✦</span> <span${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", `${b.category || "Móveis & Colchões"} em ${b.city}`))}</span>
+      </div>
+
+      <h1 style="font-size:clamp(36px,4.5vw,58px);font-weight:900;line-height:1.08;letter-spacing:-0.03em;color:#fff;"${ed("hero.title")}>
+        ${titleWithAccent(ctx, "hero.title", defTitle, "hero.accent")}
+      </h1>
+      <input type="hidden" data-accent="hero.accent" value="${esc(ctx.t("hero.accent", "conforto e qualidade."))}">
+
+      <p style="font-size:17px;line-height:1.6;color:rgba(255,255,255,0.85);font-weight:400;"${ed("hero.subtitle")}>
+        ${esc(ctx.t("hero.subtitle", defSub))}
+      </p>
+
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:8px;">
+        ${btnHtml(ctx, "cta1", "Falar no WhatsApp", "btn-acc", `Olá! Vim pelo site da ${b.name} e gostaria de atendimento.`)}
+        <a href="#catalogo" class="btn btn-ghost bfx-lift" style="color:#fff;border-color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);" data-btn="cta2">
+          <span${ed("hero.cta2")}>${esc(ctx.t("hero.cta2", "Ver catálogo de produtos"))}</span>${ICONS.arrowR}
+        </a>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:16px;margin-top:12px;font-size:13.5px;color:rgba(255,255,255,0.85);">
+        <div style="display:flex;align-items:center;gap:4px;color:#FBBF24;">
+          ${stars}
+        </div>
+        <span><b>${formatRating(b.rating)}</b> no Google (${b.rating_count || "70+"} avaliações reais)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 DIFERENCIAIS NOVO LAR STRIP -->
+<div class="novolar-strip" style="background:#1E293B;border-top:1px solid rgba(255,255,255,0.1);border-bottom:1px solid rgba(255,255,255,0.1);padding:18px 0;color:#fff;">
+  <div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:20px;align-items:center;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🛡️</span>
+      <div>
+        <strong style="display:block;font-size:13px;">Atendimento Próximo</strong>
+        <small style="color:#94A3B8;font-size:11.5px;">Compare conforto e materiais</small>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🛋️</span>
+      <div>
+        <strong style="display:block;font-size:13px;">Variedade de Produtos</strong>
+        <small style="color:#94A3B8;font-size:11.5px;">Para todos os ambientes</small>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">💳</span>
+      <div>
+        <strong style="display:block;font-size:13px;">Facilidade no Pagamento</strong>
+        <small style="color:#94A3B8;font-size:11.5px;">Condições e parcelamento</small>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🚚</span>
+      <div>
+        <strong style="display:block;font-size:13px;">Entrega & Montagem</strong>
+        <small style="color:#94A3B8;font-size:11.5px;">Agilidade garantida em ${esc(b.city)}</small>
+      </div>
+    </div>
+  </div>
+</div>`;
+  }
+
   const defaults = {
     gastronomia: {
       eyebrow: `${b.category} · ${b.city}${b.uf ? " — " + b.uf : ""}`,

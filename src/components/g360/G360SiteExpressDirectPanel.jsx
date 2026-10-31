@@ -20,6 +20,12 @@ import {
   Sparkles,
   Image as ImageIcon,
   Archive,
+  Eye,
+  Monitor,
+  Smartphone,
+  X,
+  BadgeCheck,
+  Check,
 } from "lucide-react";
 import { api, fmtErr } from "@/lib/api";
 import { SITE_TEMPLATES } from "@/lib/sitegen/theme";
@@ -36,6 +42,245 @@ import {
 } from "@/firebase";
 import { GoogleSignInButton } from "./GoogleWorkspacePanel";
 
+export function formatPhone(val) {
+  if (!val) return "";
+  const clean = String(val).replace(/\D/g, "").slice(0, 11);
+  if (clean.length <= 2) return `(${clean}`;
+  if (clean.length <= 6) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`;
+  if (clean.length <= 10) return `(${clean.slice(0, 2)}) ${clean.slice(2, 6)}-${clean.slice(6)}`;
+  return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7, 11)}`;
+}
+
+export function getRecommendedTemplate(biz) {
+  if (!biz) return "vitrine-express";
+  const hay = `${biz.name || ""} ${biz.category || ""} ${biz.segment || ""} ${biz.realNiche || ""} ${biz.bio || ""}`.toLowerCase();
+  if (/m[oó]vei|colch|colch[aã]o|cama\s*box|estofad|sof[aá]|decora|ambiente|planejad|novo\s*lar/i.test(hay)) {
+    return "novolar-moveis"; // Modelo #08 · Mega Vitrine & Móveis
+  }
+  if (/g[aá]s|glp|botij[aã]o|distribuidora|farm[aá]cia|drogaria|pe[cç]a|autope[cç]a|oficina|mecanic|ferragen|ferramenta|material|constru[cç][aã]o|dep[oó]sito|supermercado|mercado|com[eé]rcio|loja\b|varejo/.test(hay)) {
+    return "vitrine-express"; // Modelo #07 · Comércio & Varejo
+  }
+  if (/restauran|pizz|hamburg|lanche|churrasc|bar\b|bistro|pamonh|a[cç]a[ií]|sorvet|massa|comida|marmita/.test(hay)) {
+    return "simprao"; // Modelo #04 · Gastronomia & Delivery
+  }
+  if (/padar|confeitar|doceri|caf[eé]|bolo|torta|salgado|encomenda/.test(hay)) {
+    return "zycron-padaria"; // Modelo #02 · Padarias & Cafeterias
+  }
+  if (/moda|roupa|boutique|cal[cç]ado|vestu|joia|semijoia|acess[oó]rio|[oó]tica|decora[cç][aã]o/.test(hay)) {
+    return "zycron-moda"; // Modelo #03 · Vitrine & Moda
+  }
+  if (/barbe|cabelo\s*masculino|tatu|tattoo|studio\s*ink|moto|lava\s*jato|est[uú]dio/.test(hay)) {
+    return "zycron-barbearia"; // Modelo #01 · Barbearias & Serviços
+  }
+  if (/cl[ií]nic|m[eé]dic|odonto|dentist|psicol|fisioter|advoc|advog|consultor|cont[aá]bil|contabil|engenhar|b2b/.test(hay)) {
+    return "modelo-premium"; // Modelo #06 · Executivo & Clínicas
+  }
+  if (/est[eé]tic|beleza|sal[aã]o|manicure|pedicure|sobrancelha|c[ií]lio|depila|massag|spa|atelie|costura/.test(hay)) {
+    return "atelie-val"; // Modelo #05 · Estética & Ateliê
+  }
+  return "vitrine-express";
+}
+
+function renderArchetypeVisual(tplId) {
+  switch (tplId) {
+    case "zycron-barbearia":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#16181B] p-2 flex flex-col justify-between border border-white/10 text-white select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-white/10">
+            <span className="text-[7.5px] font-black tracking-widest text-slate-200 uppercase">BARBER STUDIO</span>
+            <span className="text-[7px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">● Aberto</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8.5px] font-black uppercase text-white leading-tight truncate">CORTE & ESTILO</div>
+              <div className="w-12 h-1 rounded bg-[#2443C2]" />
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2443C2] to-slate-800 flex items-center justify-center text-[10px] shadow shrink-0">
+              ✂
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[7px]">
+            <span className="font-bold text-amber-400">★ 5.0 (Google)</span>
+            <span className="font-extrabold px-1.5 py-0.5 rounded bg-[#2443C2] text-white">Agendar</span>
+          </div>
+        </div>
+      );
+
+    case "zycron-padaria":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#3B2342] p-2 flex flex-col justify-between border border-pink-500/20 text-white select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-white/10">
+            <span className="text-[7.5px] font-bold text-[#F1E6F5]">Padaria & Confeitaria</span>
+            <span className="text-[6.5px] font-bold text-[#F1E6F5]/80">Fornos a lenha</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8px] font-serif font-bold text-[#F1E6F5] truncate">Pães & Bolos Frescos</div>
+              <div className="text-[6.5px] px-1 py-0.5 rounded bg-[#9C3D6E]/50 text-white inline-block">Encomendas 24h</div>
+            </div>
+            <div className="w-7 h-8 rounded-t-full bg-gradient-to-b from-[#9C3D6E] to-[#F1E6F5]/20 flex items-center justify-center text-[10px] border border-white/20 shrink-0">
+              🥐
+            </div>
+          </div>
+          <div className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300 text-[6.5px] flex items-center justify-between">
+            <span>✓✓ Pedido WhatsApp</span>
+            <span className="font-bold">Ao Vivo</span>
+          </div>
+        </div>
+      );
+
+    case "zycron-moda":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#F6F4F1] p-2 flex flex-col justify-between border border-black/10 text-[#151515] select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-black/10">
+            <span className="text-[7.5px] font-serif tracking-widest uppercase font-bold">CONCEPT LOOKBOOK</span>
+            <span className="text-[6.5px] text-slate-500">2026/EDITION</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 py-1 flex-1">
+            <div className="rounded bg-gradient-to-b from-stone-300 to-stone-500 p-1 flex flex-col justify-end text-white">
+              <span className="text-[6px] font-bold leading-none">NOVA COLEÇÃO</span>
+            </div>
+            <div className="rounded bg-gradient-to-b from-stone-400 to-stone-700 p-1 flex flex-col justify-end text-white">
+              <span className="text-[6px] font-bold leading-none">EDITORIAL 4:5</span>
+            </div>
+          </div>
+          <div className="text-[6px] font-mono uppercase tracking-wider text-slate-600 truncate border-t border-black/10 pt-0.5">
+            ✦ EXCLUSIVIDADE ✦ ALTO PADRÃO ✦ DESIGN
+          </div>
+        </div>
+      );
+
+    case "simprao":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#153E23] p-2 flex flex-col justify-between border border-emerald-500/20 text-white select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-white/10">
+            <span className="text-[7.5px] font-black uppercase text-[#F3C94D]">SABOR REGIONAL</span>
+            <span className="text-[6.5px] font-bold text-amber-300">★ 4.9 (Google)</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8px] font-black text-white leading-tight truncate">Cardápio & Delivery</div>
+              <div className="text-[6.5px] text-emerald-200">Pratos & Lanches</div>
+            </div>
+            <div className="w-7 h-7 rounded-full bg-[#2D7819] border border-[#F3C94D] flex items-center justify-center text-[10px] shrink-0">
+              🍕
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[6px] font-bold">
+            <span className="rounded bg-[#F3C94D] text-[#153E23] py-0.5">Pizzas</span>
+            <span className="rounded bg-white/10 text-white py-0.5">Pratos</span>
+            <span className="rounded bg-white/10 text-white py-0.5">Delivery</span>
+          </div>
+        </div>
+      );
+
+    case "atelie-val":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#F7F3EE] p-2 flex flex-col justify-between border border-[#AD806E]/30 text-[#373B32] select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-[#AD806E]/20">
+            <div className="flex items-center gap-1">
+              <div className="w-3.5 h-3.5 rounded-full bg-[#A57258] text-white flex items-center justify-center text-[6.5px] font-bold">AV</div>
+              <span className="text-[7.5px] font-serif font-bold text-[#A57258]">Estética & Beleza</span>
+            </div>
+            <span className="text-[6.5px] text-stone-500">Atendimento VIP</span>
+          </div>
+          <div className="flex items-center justify-between gap-1 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[7.5px] font-serif font-bold text-[#373B32] truncate">Cuidados & Realce</div>
+              <div className="flex gap-1 text-[6px] font-bold text-[#A57258]">
+                <span>100% Seguro</span> · <span>5.0 ★</span>
+              </div>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-[#A57258]/15 border border-[#A57258]/40 flex items-center justify-center text-[10px] shrink-0">
+              ✨
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-0.5 pt-0.5 border-t border-[#AD806E]/20 text-center text-[5.5px] font-semibold text-[#A57258]">
+            <span className="rounded bg-white py-0.5">Facial</span>
+            <span className="rounded bg-white py-0.5">Corpo</span>
+            <span className="rounded bg-white py-0.5">Laser</span>
+            <span className="rounded bg-white py-0.5">Agendar</span>
+          </div>
+        </div>
+      );
+
+    case "modelo-premium":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#0C2926] p-2 flex flex-col justify-between border border-emerald-500/20 text-white select-none shadow-inner">
+          <div className="flex items-center justify-between pb-1 border-b border-white/10">
+            <span className="text-[7.5px] font-black uppercase tracking-wider text-[#B5D7B6]">CENTRO MÉDICO & B2B</span>
+            <span className="text-[6.5px] font-bold text-emerald-400">✓ Ativo</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8px] font-extrabold text-white leading-tight truncate">Alta Autoridade</div>
+              <div className="text-[6.5px] text-[#B5D7B6]">Corpo Clínico & Exames</div>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2F6353] to-emerald-950 border border-emerald-400/30 flex items-center justify-center text-[10px] shrink-0">
+              ⚕️
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[6px] font-bold">
+            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">01 Consulta</span>
+            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">02 Exames</span>
+            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">03 Contato</span>
+          </div>
+        </div>
+      );
+
+    case "novolar-moveis":
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#0F172A] p-2 flex flex-col justify-between border border-red-500/30 text-white select-none shadow-inner relative">
+          <div className="bg-[#DC2626] -mx-2 -mt-2 px-2 py-0.5 flex items-center justify-between text-[6.5px] font-black uppercase text-white tracking-wider">
+            <span>🛋️ MÓVEIS NOVO LAR</span>
+            <span>⭐ 5.0 GOOGLE</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8px] font-black text-white leading-tight truncate">Conforto & Ambientes</div>
+              <div className="text-[6.5px] text-red-300">Sofás, Colchões & Ambientes</div>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#DC2626] to-slate-900 border border-white/20 flex items-center justify-center text-[10px] shrink-0">
+              🛏️
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[5.5px] font-bold text-slate-200">
+            <span className="rounded bg-white/10 py-0.5">Sofás</span>
+            <span className="rounded bg-white/10 py-0.5">Colchões</span>
+            <span className="rounded bg-white/10 py-0.5">Mesas</span>
+            <span className="rounded bg-[#DC2626] text-white py-0.5">Catálogo</span>
+          </div>
+        </div>
+      );
+
+    case "vitrine-express":
+    default:
+      return (
+        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#111827] p-2 flex flex-col justify-between border border-blue-500/30 text-white select-none shadow-inner">
+          <div className="bg-[#2563EB] -mx-2 -mt-2 px-2 py-0.5 flex items-center justify-between text-[6.5px] font-black uppercase text-white tracking-wider">
+            <span>⚡ ENTREGA RÁPIDA</span>
+            <span>💳 PIX & CARTÃO</span>
+          </div>
+          <div className="flex items-center justify-between gap-1.5 py-1">
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <div className="text-[8px] font-black text-white leading-tight truncate">Catálogo & Pronta Entrega</div>
+              <div className="text-[6.5px] font-bold text-amber-400">Orçamento no WhatsApp</div>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2563EB] to-slate-900 border border-amber-400/40 flex items-center justify-center text-[10px] shrink-0">
+              📦
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-0.5 border-t border-white/10 text-[6.5px]">
+            <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold">R$ Preço Justo</span>
+            <span className="font-extrabold px-1.5 py-0.5 rounded bg-emerald-600 text-white">
+              Pedir WhatsApp →
+            </span>
+          </div>
+        </div>
+      );
+  }
+}
+
 export default function G360SiteExpressDirectPanel({
   dark = false,
   activeBusiness,
@@ -46,14 +291,17 @@ export default function G360SiteExpressDirectPanel({
   onOpenVisualBriefing,
   onProjectsChanged,
   onSwitchToStandaloneSiteExpress,
+  onBack,
 }) {
   const [query, setQuery] = useState(activeBusiness?.name || "");
   const [suggestions, setSuggestions] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [selectedBiz, setSelectedBiz] = useState(activeBusiness || null);
   const [selectedTplId, setSelectedTplId] = useState(
-    activeBusiness?.recommended_template || SITE_TEMPLATES[0]?.id || "vitrine-express"
+    activeBusiness?.recommended_template || getRecommendedTemplate(activeBusiness) || "vitrine-express"
   );
+  const [previewModalTpl, setPreviewModalTpl] = useState(null);
+  const [previewDevice, setPreviewDevice] = useState("desktop");
   const [selectedPaletteId, setSelectedPaletteId] = useState("purple_royal");
   const [referenceUrl, setReferenceUrl] = useState("");
   const [generatingPrd, setGeneratingPrd] = useState(false);
@@ -211,8 +459,9 @@ export default function G360SiteExpressDirectPanel({
     if (activeBusiness?.name) {
       setSelectedBiz(activeBusiness);
       setQuery(activeBusiness.name);
-      if (activeBusiness.recommended_template) {
-        setSelectedTplId(activeBusiness.recommended_template);
+      const rec = activeBusiness.recommended_template || getRecommendedTemplate(activeBusiness);
+      if (rec) {
+        setSelectedTplId(rec);
       }
     }
   }, [activeBusiness?.name]);
@@ -250,9 +499,12 @@ export default function G360SiteExpressDirectPanel({
     try {
       const { data } = await api.get(`/places/details/${encodeURIComponent(sug.place_id)}`);
       setSelectedBiz(data);
-      if (data.recommended_template) setSelectedTplId(data.recommended_template);
+      const rec = data.recommended_template || getRecommendedTemplate(data);
+      if (rec) setSelectedTplId(rec);
     } catch {
       setSelectedBiz(sug);
+      const rec = sug.recommended_template || getRecommendedTemplate(sug);
+      if (rec) setSelectedTplId(rec);
     }
   };
 
@@ -473,6 +725,15 @@ export default function G360SiteExpressDirectPanel({
 
   return (
     <div className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-[#7C3AED] text-[13px] font-bold cursor-pointer transition-colors shadow-sm"
+        >
+          ← Voltar para Auditoria
+        </button>
+      )}
       {/* DIRECT SITE EXPRESS WORKSPACE HEADER (NO MARKETING HOME CLUTTER) */}
       <section className={`rounded-3xl p-5 sm:p-7 space-y-5 ${cardClass}`} data-testid="site-express-direct-panel">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-inherit">
@@ -542,11 +803,25 @@ export default function G360SiteExpressDirectPanel({
                         dark ? "hover:bg-white/5" : "hover:bg-[#F5F3FF]"
                       }`}
                     >
-                      <div>
-                        <span className="font-semibold">{sug.name}</span>
-                        <span className={`ml-2 text-[11.5px] ${mutedText}`}>
-                          {sug.category} · {sug.city}
-                        </span>
+                      <div className="flex items-center gap-3 min-w-0">
+                        {sug.photo && !sug.photo.startsWith("data:") ? (
+                          <img
+                            src={sug.photo}
+                            alt={sug.name}
+                            referrerPolicy="no-referrer"
+                            className="w-9 h-9 rounded-xl object-cover shrink-0 border border-purple-500/20 bg-white"
+                          />
+                        ) : (
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#7C3AED] to-[#4C1D95] text-white font-black text-[14px] flex items-center justify-center shrink-0 shadow-sm">
+                            {String(sug.name || "E").charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <span className="font-semibold block truncate">{sug.name}</span>
+                          <span className={`text-[11.5px] block truncate ${mutedText}`}>
+                            {sug.category} · {sug.city}
+                          </span>
+                        </div>
                       </div>
                       <ChevronRight size={14} className="text-[#7C3AED]" />
                     </button>
@@ -652,60 +927,194 @@ export default function G360SiteExpressDirectPanel({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
-                  {SITE_TEMPLATES.map((tpl) => {
-                    const isSelected = selectedTplId === tpl.id;
-                    const c1 = tpl.previewColors?.[0] || "#7C3AED";
-                    const c2 = tpl.previewColors?.[1] || "#1E1B4B";
-                    return (
-                      <button
-                        key={tpl.id}
-                        type="button"
-                        onClick={() => setSelectedTplId(tpl.id)}
-                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2 ${
-                          isSelected
-                            ? "border-[#7C3AED] bg-[#7C3AED]/10 ring-2 ring-[#7C3AED]/30"
-                            : `${borderCol} ${dark ? "bg-[#14121E] hover:border-white/25" : "bg-white hover:border-purple-300"}`
-                        }`}
-                        data-testid={`quick-tpl-card-${tpl.id}`}
-                      >
-                        {/* Mini Wireframe Visual Preview of the Template */}
-                        <div
-                          className="w-full h-14 rounded-lg overflow-hidden p-1.5 flex flex-col justify-between border border-black/10"
-                          style={{
-                            background: `linear-gradient(135deg, ${c2} 0%, ${c1} 100%)`,
-                          }}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="w-8 h-1.5 rounded bg-white/80" />
-                            <span className="w-4 h-1.5 rounded bg-emerald-400" />
-                          </div>
-                          <div className="space-y-1">
-                            <div className="w-4/5 h-2 rounded bg-white/90" />
-                            <div className="w-3/5 h-1.5 rounded bg-white/60" />
-                          </div>
-                          <div className="grid grid-cols-3 gap-1">
-                            <span className="h-2 rounded-xs bg-white/30" />
-                            <span className="h-2 rounded-xs bg-white/30" />
-                            <span className="h-2 rounded-xs bg-white/30" />
-                          </div>
-                        </div>
+                {/* 7 BESPOKE VISUAL ARCHETYPES GRID */}
+                {(() => {
+                  const recTplId = getRecommendedTemplate(selectedBiz || activeBusiness);
+                  const selectedTemplateObj = SITE_TEMPLATES.find((t) => t.id === selectedTplId) || SITE_TEMPLATES[0];
+                  const isCurrentRecommended = selectedTemplateObj.id === recTplId;
 
-                        <div>
-                          <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C3AED] truncate">
-                            {tpl.badge || tpl.archetype}
+                  return (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+                        {SITE_TEMPLATES.map((tpl) => {
+                          const isSelected = selectedTplId === tpl.id;
+                          const isRecommended = recTplId === tpl.id;
+
+                          return (
+                            <div
+                              key={tpl.id}
+                              onClick={() => setSelectedTplId(tpl.id)}
+                              className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 relative group ${
+                                isSelected
+                                  ? "border-[#7C3AED] bg-[#7C3AED]/10 ring-2 ring-[#7C3AED]/40 shadow-md"
+                                  : isRecommended
+                                  ? "border-emerald-500/50 bg-emerald-500/5 hover:border-emerald-500"
+                                  : `${borderCol} ${dark ? "bg-[#14121E] hover:border-white/30" : "bg-white hover:border-purple-300"}`
+                              }`}
+                              data-testid={`quick-tpl-card-${tpl.id}`}
+                            >
+                              {/* Recommendation Badge or Selection Status */}
+                              <div className="flex items-center justify-between gap-1">
+                                {isRecommended ? (
+                                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[8.5px] font-black tracking-wide flex items-center gap-0.5 shadow-sm">
+                                    <BadgeCheck size={10} />
+                                    <span>IDEAL</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-[#7C3AED] truncate">
+                                    {tpl.badge?.split("·")[0] || tpl.archetype}
+                                  </span>
+                                )}
+
+                                {isSelected && (
+                                  <span className="w-4 h-4 rounded-full bg-[#7C3AED] text-white flex items-center justify-center text-[9px] font-black shrink-0">
+                                    ✓
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* BESPOKE WIREFRAME VISUAL FOR THIS ARCHETYPE */}
+                              <div className="relative group/vis">
+                                {renderArchetypeVisual(tpl.id)}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewModalTpl(tpl);
+                                  }}
+                                  className="absolute inset-0 bg-black/60 opacity-0 group-hover/vis:opacity-100 backdrop-blur-[2px] rounded-lg transition-opacity flex items-center justify-center gap-1.5 text-white text-[11px] font-bold cursor-pointer"
+                                  title="Espiar tela cheia"
+                                >
+                                  <Eye size={13} />
+                                  <span>Espiar</span>
+                                </button>
+                              </div>
+
+                              {/* Title & Description */}
+                              <div className="space-y-1">
+                                <div className="text-[12px] font-black leading-tight line-clamp-1 text-slate-900 dark:text-slate-100">
+                                  {tpl.name}
+                                </div>
+                                <div className={`text-[10.5px] leading-snug line-clamp-2 ${mutedText}`}>
+                                  {tpl.subtitle || tpl.description}
+                                </div>
+                              </div>
+
+                              {/* Card Action Buttons */}
+                              <div className="pt-1 border-t border-inherit/60 flex items-center justify-between gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewModalTpl(tpl);
+                                  }}
+                                  className={`px-2 py-1 rounded-lg text-[10.5px] font-extrabold flex items-center gap-1 transition-colors ${
+                                    isSelected
+                                      ? "text-[#7C3AED] hover:bg-[#7C3AED]/20"
+                                      : "text-slate-600 dark:text-slate-300 hover:text-[#7C3AED] hover:bg-slate-100 dark:hover:bg-white/10"
+                                  }`}
+                                  title="Visualizar demonstração"
+                                >
+                                  <Eye size={12} />
+                                  <span>Demonstração</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTplId(tpl.id)}
+                                  className={`px-2 py-1 rounded-lg text-[10.5px] font-black ${
+                                    isSelected
+                                      ? "bg-[#7C3AED] text-white"
+                                      : "bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200"
+                                  }`}
+                                >
+                                  {isSelected ? "Ativo" : "Usar"}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* ACTIVE MODEL DETAILED INSPECTOR PANEL */}
+                      <div
+                        className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+                          isCurrentRecommended
+                            ? "border-emerald-500/40 bg-gradient-to-r from-emerald-500/5 via-transparent to-purple-500/5"
+                            : `${borderCol} ${subtleBg}`
+                        }`}
+                        data-testid="active-model-inspector"
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-black uppercase tracking-wider px-3 py-0.5 rounded-full bg-[#7C3AED] text-white">
+                                {selectedTemplateObj.badge || selectedTemplateObj.archetype}
+                              </span>
+                              <h4 className="text-[16px] font-black text-slate-900 dark:text-slate-100">
+                                {selectedTemplateObj.name}
+                              </h4>
+                              {isCurrentRecommended && (
+                                <span className="text-[11.5px] font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-3 py-0.5 rounded-full flex items-center gap-1.5 shadow-xs">
+                                  <BadgeCheck size={14} className="text-emerald-500" />
+                                  <span>
+                                    Recomendado para {selectedBiz?.name || "esta empresa"}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-relaxed max-w-3xl">
+                              {selectedTemplateObj.description}
+                            </p>
+
+                            {/* Section breakdown */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+                              <span className="font-extrabold uppercase text-[#7C3AED]">Seções Inclusas:</span>
+                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
+                                ⚡ Hero Alta Conversão
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
+                                📦 Catálogo de Serviços/Produtos
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
+                                ⭐ Avaliações Reais Google (5.0)
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
+                                📍 Endereço & Horários Oficiais
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
+                                💬 Botão Flutuante de WhatsApp
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-[11.5px] font-extrabold leading-tight line-clamp-1 mt-0.5">
-                            {tpl.name}
-                          </div>
-                          <div className={`text-[10px] leading-snug line-clamp-2 mt-0.5 ${mutedText}`}>
-                            {tpl.subtitle || tpl.description}
+
+                          <div className="flex items-center gap-2.5 shrink-0 self-start lg:self-center">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewModalTpl(selectedTemplateObj)}
+                              className="px-4 py-2.5 rounded-xl border border-[#7C3AED] text-[#7C3AED] hover:bg-[#7C3AED]/10 text-[12.5px] font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                              data-testid="inspect-template-preview-btn"
+                            >
+                              <Eye size={15} />
+                              <span>Ver Demonstração Interativa</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleGenerateNow}
+                              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#7C3AED] to-[#9333EA] hover:opacity-95 text-white text-[12.5px] font-black flex items-center gap-1.5 cursor-pointer shadow-md transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                              data-testid="use-selected-template-generate-btn"
+                            >
+                              <Rocket size={15} />
+                              <span>Gerar com este Modelo</span>
+                            </button>
                           </div>
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -1262,6 +1671,129 @@ export default function G360SiteExpressDirectPanel({
           </div>
         </div>
       </section>
+
+      {/* FULLSCREEN RESPONSIVE PREVIEW MODAL (DESKTOP & MOBILE SWITCHER) */}
+      {previewModalTpl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col p-2 sm:p-5 animate-fadeIn"
+          data-testid="template-preview-modal"
+        >
+          <div
+            className={`w-full max-w-7xl h-full mx-auto rounded-3xl flex flex-col overflow-hidden shadow-2xl border ${borderCol} ${
+              dark ? "bg-[#100E19]" : "bg-white"
+            }`}
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-slate-900 border-b border-white/10 text-white flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] font-black uppercase tracking-wider px-3 py-0.5 rounded-full bg-[#7C3AED] text-white">
+                  {previewModalTpl.badge || previewModalTpl.archetype}
+                </span>
+                <div>
+                  <h3 className="text-[15px] sm:text-[17px] font-black leading-tight">
+                    {previewModalTpl.name}
+                  </h3>
+                  <p className="text-[12px] text-slate-300">
+                    Visualização ao vivo com dados de:{" "}
+                    <strong className="text-purple-300">
+                      {selectedBiz?.name || "Jonas Gás"}
+                    </strong>{" "}
+                    ({selectedBiz?.category || "Comércio & Distribuição"})
+                  </p>
+                </div>
+              </div>
+
+              {/* Desktop vs Mobile Toggle */}
+              <div className="flex items-center gap-1.5 bg-white/10 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setPreviewDevice("desktop")}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-extrabold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    previewDevice === "desktop"
+                      ? "bg-[#7C3AED] text-white shadow-md"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  data-testid="preview-device-desktop"
+                >
+                  <Monitor size={15} />
+                  <span>Desktop</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDevice("mobile")}
+                  className={`px-3 py-1.5 rounded-lg text-[12px] font-extrabold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    previewDevice === "mobile"
+                      ? "bg-[#7C3AED] text-white shadow-md"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  data-testid="preview-device-mobile"
+                >
+                  <Smartphone size={15} />
+                  <span>Mobile</span>
+                </button>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTplId(previewModalTpl.id);
+                    setPreviewModalTpl(null);
+                    toast.success(`Modelo "${previewModalTpl.name}" selecionado com sucesso!`);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[12.5px] flex items-center gap-1.5 shadow-md transition-all cursor-pointer hover:scale-[1.02]"
+                  data-testid="confirm-use-template-btn"
+                >
+                  <Check size={15} />
+                  <span>Escolher Este Modelo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewModalTpl(null)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Fechar visualização"
+                  data-testid="close-template-preview-btn"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Frame Viewport */}
+            <div className="flex-1 bg-slate-900/90 p-3 sm:p-6 overflow-auto flex items-center justify-center">
+              <div
+                className={`transition-all duration-300 h-full flex flex-col items-center justify-center ${
+                  previewDevice === "desktop"
+                    ? "w-full rounded-2xl overflow-hidden shadow-2xl bg-white"
+                    : "w-[390px] max-w-full h-[760px] max-h-full rounded-[44px] border-[10px] border-slate-950 shadow-2xl overflow-hidden bg-white relative"
+                }`}
+              >
+                <iframe
+                  title={`Live Preview ${previewModalTpl.name}`}
+                  srcDoc={generateSiteHtml(
+                    createProjectData(
+                      selectedBiz || {
+                        name: "Jonas Gás",
+                        category: "Distribuição e revenda de gás liquefeito de petróleo (GLP)",
+                        city: "Anápolis",
+                        phone: "(62) 99113-8004",
+                        whatsapp: "5562991138004",
+                      },
+                      previewModalTpl.archetype,
+                      previewModalTpl.id
+                    ),
+                    { editor: false }
+                  )}
+                  className="w-full h-full border-0 bg-white"
+                  sandbox="allow-scripts allow-same-origin"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

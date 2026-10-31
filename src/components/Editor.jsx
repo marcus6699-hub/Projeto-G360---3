@@ -145,18 +145,18 @@ export default function Editor({ project, onProject, onSave, onExit, dark = fals
   const patchData = useCallback(
     (fn) => {
       recordIframeScroll();
-      onProject((p) => {
-        const nextData = fn(p.data);
-        if (!isUndoRedoRef.current) {
-          setHistory((prev) => {
-            const sliced = prev.slice(0, historyIdx + 1);
-            return [...sliced, nextData];
-          });
-          setHistoryIdx((prev) => prev + 1);
-        }
-        isUndoRedoRef.current = false;
-        return { ...p, archetype: nextData.archetype || p.archetype, data: nextData };
-      });
+      const currentData = projectRef.current?.data;
+      if (!currentData) return;
+      const nextData = fn(currentData);
+      if (!isUndoRedoRef.current) {
+        setHistory((prev) => {
+          const sliced = prev.slice(0, historyIdx + 1);
+          return [...sliced, nextData];
+        });
+        setHistoryIdx((prev) => prev + 1);
+      }
+      isUndoRedoRef.current = false;
+      onProject((p) => ({ ...p, archetype: nextData.archetype || p.archetype, data: nextData }));
       setDirty(true);
     },
     [onProject, historyIdx]

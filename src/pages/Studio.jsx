@@ -23,6 +23,7 @@ import {
   RefreshCw,
   X,
   ShieldCheck,
+  Globe,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { api, fmtErr } from "@/lib/api";
@@ -207,8 +208,59 @@ export default function Studio() {
   const [checking, setChecking] = useState(null);
   const [templateBiz, setTemplateBiz] = useState(null);
   const [selectedTplId, setSelectedTplId] = useState("");
-  const [activeAuditReport, setActiveAuditReport] = useState(null);
-  const [activeBusiness, setActiveBusiness] = useState(null);
+  const [activeAuditReport, setActiveAuditReport] = useState(() => {
+    try {
+      const raw = localStorage.getItem("g360_active_audit_report_v1");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeBusiness, setActiveBusiness] = useState(() => {
+    try {
+      const raw = localStorage.getItem("g360_active_business_v1");
+      if (raw) return JSON.parse(raw);
+      const repRaw = localStorage.getItem("g360_active_audit_report_v1");
+      if (repRaw) {
+        const parsedRep = JSON.parse(repRaw);
+        return parsedRep?.business || null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (activeAuditReport) {
+      try {
+        localStorage.setItem("g360_active_audit_report_v1", JSON.stringify(activeAuditReport));
+      } catch {}
+    }
+  }, [activeAuditReport]);
+
+  useEffect(() => {
+    if (activeBusiness) {
+      try {
+        localStorage.setItem("g360_active_business_v1", JSON.stringify(activeBusiness));
+      } catch {}
+    }
+  }, [activeBusiness]);
+
+  useEffect(() => {
+    if (!activeBusiness) {
+      api
+        .get("/g360/audits")
+        .then(({ data }) => {
+          const firstAudit = Array.isArray(data?.audits) ? data.audits[0] : null;
+          if (firstAudit?.business) {
+            setActiveAuditReport((prev) => prev || firstAudit);
+            setActiveBusiness((prev) => prev || firstAudit.business);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeBusiness]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -400,6 +452,12 @@ export default function Studio() {
   }, [view, productMode]);
 
   useEffect(() => {
+    if (view === "editor" && !project) {
+      setView("site-express-direct");
+    }
+  }, [view, project, setView]);
+
+  useEffect(() => {
     if (typeof document !== "undefined") {
       document.documentElement.classList.toggle("dark", dark);
     }
@@ -425,25 +483,12 @@ export default function Studio() {
       data-testid="studio-root"
       style={{ background: bgCanvas, color: dark ? "#F4F2FF" : "#120E24" }}
     >
-      {/* COLLAPSIBLE TOP BAR (HIDDEN IN FULL-SCREEN SITE EDITOR) */}
-      {!topHeaderCollapsed && view !== "editor" ? (
+      {/* TOP HEADER BAR: Clean utility bar on Desktop (Sidebar handles nav), Full Horizontal Nav on Mobile (<768px) */}
+      {view !== "editor" && (
         <header className={`sticky top-0 z-40 w-full max-w-full backdrop-blur-xl border-b shadow-sm ${headerClass}`}>
-          <div className="max-w-[1440px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
-            {/* Left: Sidebar Toggle + Brand Wordmark */}
+          <div className="max-w-[1440px] w-full mx-auto px-3 sm:px-6 h-13 flex items-center justify-between gap-2 sm:gap-4">
+            {/* Left: Brand Wordmark */}
             <div className="flex items-center gap-2 shrink-0">
-              {view !== "editor" && (
-                <button
-                  type="button"
-                  onClick={() => setLeftNavExpanded((v) => !v)}
-                  className={`p-2 rounded-xl border transition-colors cursor-pointer ${
-                    dark ? "border-white/10 hover:bg-white/5 text-[#A39BBF]" : "border-purple-900/10 hover:bg-purple-50 text-[#5E5775]"
-                  }`}
-                  title={leftNavExpanded ? "Recolher Menu Lateral" : "Expandir Menu Lateral"}
-                  data-testid="toggle-left-sidebar-btn"
-                >
-                  {leftNavExpanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => {
@@ -459,133 +504,8 @@ export default function Studio() {
               </button>
             </div>
 
-            {/* Center: Concise Single-Line Navigation Links */}
-            {productMode === "g360" ? (
-              <nav className="flex-1 min-w-0 flex items-center gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar">
-                {g360NavItems.map((navItem) => {
-                  const Icon = navItem.icon;
-                  const active =
-                    navItem.id === "crm-folders"
-                      ? view === "crm" && crmSubView === "folders"
-                      : navItem.id === "crm"
-                      ? view === "crm" && crmSubView !== "folders"
-                      : view === navItem.id;
-                  return (
-                    <button
-                      key={navItem.id}
-                      type="button"
-                      data-testid={navItem.testId}
-                      onClick={() => {
-                        if (navItem.id === "crm-folders") {
-                          handleSelectNavItem("crm-folders");
-                        } else if (navItem.id === "crm") {
-                          handleSelectNavItem("crm");
-                        } else {
-                          handleSelectNavItem(navItem.id);
-                        }
-                      }}
-                      className={`flex items-center gap-1.5 text-[12px] sm:text-[12.5px] font-bold px-2.5 sm:px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                        active
-                          ? "bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white shadow-md"
-                          : dark
-                          ? "text-[#A39BBF] hover:text-white hover:bg-white/5"
-                          : "text-[#5E5775] hover:text-[#120E24] hover:bg-purple-50"
-                      }`}
-                    >
-                      <Icon size={14} />
-                      <span>{navItem.label}</span>
-                    </button>
-                  );
-                })}
-              </nav>
-            ) : (
-              /* Standalone Site Express Navigation */
-              <nav className="flex-1 min-w-0 flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
-                <button
-                  type="button"
-                  data-testid="nav-new-site"
-                  onClick={() => setView("home")}
-                  className={`flex items-center gap-2 text-[12.5px] font-bold px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    view === "home"
-                      ? "bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white"
-                      : dark
-                      ? "text-[#A39BBF] hover:bg-white/5"
-                      : "text-[#5E5775] hover:bg-purple-50"
-                  }`}
-                >
-                  <Plus size={14} /> <span>Novo Site</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="nav-templates"
-                  onClick={() => setView("templates")}
-                  className={`flex items-center gap-2 text-[12.5px] font-bold px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    view === "templates"
-                      ? "bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white"
-                      : dark
-                      ? "text-[#A39BBF] hover:bg-white/5"
-                      : "text-[#5E5775] hover:bg-purple-50"
-                  }`}
-                >
-                  <Layers size={14} /> <span>Modelos (7)</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="nav-clients"
-                  onClick={() => {
-                    setView("clients");
-                    loadProjects();
-                  }}
-                  className={`flex items-center gap-2 text-[12.5px] font-bold px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    view === "clients"
-                      ? "bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white"
-                      : dark
-                      ? "text-[#A39BBF] hover:bg-white/5"
-                      : "text-[#5E5775] hover:bg-purple-50"
-                  }`}
-                >
-                  <Users size={14} /> <span>Meus Sites</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProductMode("g360");
-                    setView("audit");
-                  }}
-                  className="flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl border border-[#7C3AED] text-[#7C3AED] hover:bg-[#7C3AED] hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                >
-                  <ArrowLeftRight size={13} /> <span>Voltar ao G360 Completo</span>
-                </button>
-              </nav>
-            )}
-
-            {/* Right: Escudo R$ 0,00 + Testar IAs + Day/Night Toggle + Collapse Top Bar + User Menu */}
+            {/* Right: Day/Night Toggle + User Menu */}
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setShieldModalOpen(true);
-                  loadZeroCostShield();
-                }}
-                data-testid="zero-cost-shield-btn"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-[11.5px] font-extrabold transition-colors cursor-pointer shadow-sm"
-                title="Escudo Custo Zero (R$ 0,00) — Bloqueia cobranças do Google Cloud (My Project 11343)"
-              >
-                <ShieldCheck size={14} />
-                <span>Escudo R$ 0,00</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleRunGlobalAiTest}
-                data-testid="global-ai-test-btn"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 text-[11.5px] font-extrabold transition-colors cursor-pointer"
-                title="Testar conexão em tempo real com Gemini Free, Groq, OpenRouter, NVIDIA e Outscraper (R$ 0,00)"
-              >
-                <Activity size={14} />
-                <span className="hidden xl:inline">Testar IAs</span>
-              </button>
-
               <button
                 type="button"
                 onClick={toggleTheme}
@@ -600,26 +520,14 @@ export default function Studio() {
                 {dark ? (
                   <>
                     <Sun size={14} className="text-[#FBBC04]" />
-                    <span className="hidden md:inline">Modo Dia</span>
+                    <span>Modo Dia</span>
                   </>
                 ) : (
                   <>
                     <Moon size={14} className="text-[#7C3AED]" />
-                    <span className="hidden md:inline">Modo Noite</span>
+                    <span>Modo Noite</span>
                   </>
                 )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setTopHeaderCollapsed(true)}
-                className={`p-1.5 rounded-xl border text-[11px] font-bold cursor-pointer ${
-                  dark ? "border-white/10 text-[#A39BBF] hover:bg-white/5" : "border-purple-900/10 text-[#5E5775] hover:bg-purple-50"
-                }`}
-                title="Recolher barra superior para ganhar mais espaço de tela"
-                data-testid="collapse-top-header-btn"
-              >
-                <ChevronUp size={15} />
               </button>
 
               <DropdownMenu>
@@ -676,29 +584,93 @@ export default function Studio() {
               </DropdownMenu>
             </div>
           </div>
+
+          {/* MOBILE-ONLY HORIZONTAL NAVIGATION (<768px — replaces sidebar on phones so screen space is never cramped!) */}
+          <div data-testid="mobile-top-nav" className={`md:hidden border-t px-3 py-2 overflow-x-auto no-scrollbar flex items-center gap-1.5 ${dark ? "border-white/10 bg-[#120E24]/95" : "border-purple-900/10 bg-white/95"}`}>
+            {productMode === "g360" ? (
+              <>
+                {[
+                  ...g360NavItems,
+                  { id: "clients", label: `Sites (${projects.length})`, icon: Users, testId: "mobile-nav-clients" },
+                  { id: "templates", label: "Modelos", icon: Layers, testId: "mobile-nav-templates" },
+                ].map((navItem) => {
+                  const Icon = navItem.icon;
+                  const active =
+                    navItem.id === "crm-folders"
+                      ? view === "crm" && crmSubView === "folders"
+                      : navItem.id === "crm"
+                      ? view === "crm" && crmSubView !== "folders"
+                      : view === navItem.id;
+                  return (
+                    <button
+                      key={navItem.id}
+                      type="button"
+                      data-testid={`mobile-${navItem.testId}`}
+                      onClick={() => {
+                        if (navItem.id === "clients") loadProjects();
+                        handleSelectNavItem(navItem.id);
+                      }}
+                      className={`flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                        active
+                          ? "bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white shadow-sm"
+                          : dark
+                          ? "text-[#A39BBF] bg-white/5 hover:text-white"
+                          : "text-[#5E5775] bg-purple-50/70 hover:text-[#120E24]"
+                      }`}
+                    >
+                      <Icon size={13} />
+                      <span>{navItem.label}</span>
+                    </button>
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setView("home")}
+                  className={`flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap shrink-0 cursor-pointer ${
+                    view === "home" ? "bg-[#7C3AED] text-white" : dark ? "text-[#A39BBF] bg-white/5" : "text-[#5E5775] bg-purple-50"
+                  }`}
+                >
+                  <Plus size={13} /> <span>Novo Site</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView("templates")}
+                  className={`flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap shrink-0 cursor-pointer ${
+                    view === "templates" ? "bg-[#7C3AED] text-white" : dark ? "text-[#A39BBF] bg-white/5" : "text-[#5E5775] bg-purple-50"
+                  }`}
+                >
+                  <Layers size={13} /> <span>Modelos (7)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("clients");
+                    loadProjects();
+                  }}
+                  className={`flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap shrink-0 cursor-pointer ${
+                    view === "clients" ? "bg-[#7C3AED] text-white" : dark ? "text-[#A39BBF] bg-white/5" : "text-[#5E5775] bg-purple-50"
+                  }`}
+                >
+                  <Users size={13} /> <span>Meus Sites</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductMode("g360");
+                    setView("audit");
+                  }}
+                  className="flex items-center gap-1.5 text-[12px] font-bold px-3 py-1.5 rounded-xl border border-[#7C3AED] text-[#7C3AED] whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <ArrowLeftRight size={13} /> <span>Voltar ao G360</span>
+                </button>
+              </>
+            )}
+          </div>
         </header>
-      ) : view !== "editor" ? (
-        /* Ultra-slim floating expand bar when top header is collapsed */
-        <div className="fixed top-2 right-3 z-50 flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="px-2.5 py-1 rounded-full bg-slate-900/90 text-white text-[11px] font-bold flex items-center gap-1 shadow-lg border border-white/15 cursor-pointer"
-          >
-            {dark ? <Sun size={12} className="text-amber-400" /> : <Moon size={12} className="text-purple-400" />}
-            <span>{dark ? "Dia" : "Noite"}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTopHeaderCollapsed(false)}
-            className="px-3 py-1 rounded-full bg-[#7C3AED] text-white text-[11px] font-extrabold flex items-center gap-1 shadow-lg cursor-pointer"
-            data-testid="expand-top-header-btn"
-          >
-            <ChevronDown size={13} />
-            <span>Mostrar Menu Topo</span>
-          </button>
-        </div>
-      ) : null}
+      )}
 
       {/* WORKSPACE BODY WITH PERSISTENT STUDIO SIDEBAR */}
       <div className="flex-1 flex min-h-0 relative" data-active-section={activeSection}>
@@ -752,6 +724,7 @@ export default function Studio() {
                   dark={dark}
                   activeBusiness={activeBusiness || activeAuditReport?.business}
                   onOpenSiteExpressWithBriefing={handleOpenSiteExpressDirect}
+                  onBack={() => setView("audit")}
                 />
               )}
 
@@ -761,6 +734,7 @@ export default function Studio() {
                   initialSubView={crmSubView}
                   onOpenGbpPackage={handleOpenGbpPackage}
                   onOpenSiteExpress={handleOpenSiteExpressDirect}
+                  onBack={() => setView("audit")}
                 />
               )}
 
@@ -781,6 +755,7 @@ export default function Studio() {
                     setProductMode("site-express-standalone");
                     toast.success("Modo Site Express Separado (Produto Independente) ativado.");
                   }}
+                  onBack={() => setView("audit")}
                 />
               )}
 

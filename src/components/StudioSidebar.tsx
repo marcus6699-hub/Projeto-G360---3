@@ -85,7 +85,7 @@ export default function StudioSidebar({
       data-active-section={activeSection}
       className={`${
         sidebarExpanded ? "w-64" : "w-16"
-      } shrink-0 border-r flex flex-col justify-between transition-[width] duration-200 select-none ${surfaceClass}`}
+      } hidden md:flex shrink-0 border-r flex-col justify-between transition-[width] duration-200 select-none ${surfaceClass}`}
     >
       {/* Top Section: Header + Primary 3-View Switcher (Workspace / Site Management / Settings) */}
       <div className="flex flex-col min-h-0 flex-1 overflow-y-auto studio-scroll p-2.5 space-y-4">
@@ -237,27 +237,12 @@ export default function StudioSidebar({
         </nav>
       </div>
 
-      {/* Bottom Section: Quick Diagnostics & Mode Switch */}
+      {/* Bottom Section: Mode Switch */}
       <div
         className={`p-2.5 border-t space-y-1.5 ${
           dark ? "border-white/10" : "border-purple-900/10"
         }`}
       >
-        {onRunGlobalAiTest && (
-          <button
-            type="button"
-            onClick={onRunGlobalAiTest}
-            data-testid="sidebar-ai-health-btn"
-            title="Testar conexão em tempo real com provedores de IA"
-            className={`w-full ${
-              sidebarExpanded ? "py-2 px-3 justify-start" : "py-2 px-1 justify-center"
-            } rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25 text-[12px] font-extrabold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer`}
-          >
-            <Activity size={15} className="shrink-0" />
-            {sidebarExpanded && <span className="truncate">Testar Conexão das IAs</span>}
-          </button>
-        )}
-
         {onToggleProductMode && (
           <button
             type="button"
