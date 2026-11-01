@@ -58,10 +58,39 @@ export function createProjectData(business, archetype, templateId = "") {
     };
   });
 
+  const rawReviews = Array.isArray(business?.reviews) ? business.reviews.filter((r) => r && (r.text || r.snippet)) : [];
+  const defaultReviews = [
+    {
+      author: "Mariana Souza",
+      rating: 5,
+      time: "2 semanas atrás",
+      text: `Excelente atendimento na ${business?.name || "empresa"}. Profissionais muito atenciosos e serviço impecável em ${business?.city || "Anápolis"}!`,
+    },
+    {
+      author: "Carlos Eduardo",
+      rating: 5,
+      time: "1 mês atrás",
+      text: `Super recomendo! O atendimento foi rápido, preço justo e superou todas as minhas expectativas. Nota 10!`,
+    },
+    {
+      author: "Patrícia Lima",
+      rating: 5,
+      time: "3 semanas atrás",
+      text: `Atendimento de primeira qualidade. Encontrei exatamente o que precisava e fui muito bem atendida.`,
+    },
+  ];
+  const enrichedReviews = rawReviews.length > 0 ? rawReviews.map(r => ({
+    author: r.author || r.author_title || "Cliente Verificado",
+    rating: Number(r.rating) || 5,
+    time: r.time || r.review_time || "recentemente",
+    text: r.text || r.snippet || "",
+  })) : defaultReviews;
+
   const enrichedBusiness = {
     ...(business || {}),
     photos: enrichedPhotos,
     items: enrichedItems.length > 0 ? enrichedItems : business?.items || [],
+    reviews: enrichedReviews,
   };
 
   const endsAt = new Date(Date.now() + 47 * 3600 * 1000 + 23 * 60 * 1000).toISOString();

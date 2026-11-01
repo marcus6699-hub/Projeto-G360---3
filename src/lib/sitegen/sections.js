@@ -381,9 +381,9 @@ export function hero(ctx) {
         <a href="#servicos" class="btn btn-ghost bfx-lift" style="color:#fff" data-btn="cta2"><span${ed("hero.cta2")}>${esc(ctx.t("hero.cta2", "Conhecer soluções"))}</span>${ICONS.arrowR}</a>
       </div>
       <div class="hero-proof-exec">
-        <span><i>✓</i> <span${ed("hero.p1")}>${esc(ctx.t("hero.p1", "Atendimento imediato"))}</span></span>
-        <span><i>✓</i> <span${ed("hero.p2")}>${esc(ctx.t("hero.p2", `Nota ${formatRating(b.rating)} no Google`))}</span></span>
-        <span><i>✓</i> <span${ed("hero.p3")}>${esc(ctx.t("hero.p3", "Qualidade garantida"))}</span></span>
+        <span><i style="display:inline-flex;width:14px;height:14px">${ICONS.check}</i> <span${ed("hero.p1")}>${esc(ctx.t("hero.p1", "Atendimento imediato"))}</span></span>
+        <span><i style="display:inline-flex;width:14px;height:14px">${ICONS.check}</i> <span${ed("hero.p2")}>${esc(ctx.t("hero.p2", `Nota ${formatRating(b.rating)} no Google`))}</span></span>
+        <span><i style="display:inline-flex;width:14px;height:14px">${ICONS.check}</i> <span${ed("hero.p3")}>${esc(ctx.t("hero.p3", "Qualidade garantida"))}</span></span>
       </div>
     </div>
     <div class="visual-frame-exec">
@@ -419,8 +419,8 @@ export function hero(ctx) {
   
   <div class="wrap" style="position:relative;z-index:3;padding:64px 20px;max-width:1200px;width:100%;">
     <div style="max-width:640px;display:flex;flex-direction:column;gap:20px;">
-      <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9999px;background:rgba(220,38,38,0.2);border:1px solid rgba(220,38,38,0.4);color:#FCA5A5;font-size:12px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;">
-        <span>✦</span> <span${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", `${b.category || "Móveis & Colchões"} em ${b.city}`))}</span>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:6px 14px;border-radius:9999px;background:rgba(220,38,38,0.2);border:1px solid rgba(220,38,38,0.4);color:#FCA5A5;font-size:12px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;width:fit-content;">
+        <span style="display:inline-flex;width:14px;height:14px;">${ICONS.sparkles}</span> <span${ed("hero.eyebrow")}>${esc(ctx.t("hero.eyebrow", `${b.category || "Móveis & Colchões"} em ${b.city}`))}</span>
       </div>
 
       <h1 style="font-size:clamp(36px,4.5vw,58px);font-weight:900;line-height:1.08;letter-spacing:-0.03em;color:#fff;"${ed("hero.title")}>
@@ -453,28 +453,28 @@ export function hero(ctx) {
 <div class="novolar-strip" style="background:#1E293B;border-top:1px solid rgba(255,255,255,0.1);border-bottom:1px solid rgba(255,255,255,0.1);padding:18px 0;color:#fff;">
   <div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:20px;align-items:center;">
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🛡️</span>
+      <span style="width:42px;height:42px;border-radius:12px;background:rgba(220,38,38,0.18);border:1px solid rgba(248,113,113,0.28);color:#F87171;display:grid;place-items:center;flex-shrink:0;"><span style="width:20px;height:20px;display:inline-flex;">${ICONS.shield}</span></span>
       <div>
         <strong style="display:block;font-size:13px;">Atendimento Próximo</strong>
         <small style="color:#94A3B8;font-size:11.5px;">Compare conforto e materiais</small>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🛋️</span>
+      <span style="width:42px;height:42px;border-radius:12px;background:rgba(220,38,38,0.18);border:1px solid rgba(248,113,113,0.28);color:#F87171;display:grid;place-items:center;flex-shrink:0;"><span style="width:20px;height:20px;display:inline-flex;">${ICONS.sofa}</span></span>
       <div>
         <strong style="display:block;font-size:13px;">Variedade de Produtos</strong>
         <small style="color:#94A3B8;font-size:11.5px;">Para todos os ambientes</small>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">💳</span>
+      <span style="width:42px;height:42px;border-radius:12px;background:rgba(220,38,38,0.18);border:1px solid rgba(248,113,113,0.28);color:#F87171;display:grid;place-items:center;flex-shrink:0;"><span style="width:20px;height:20px;display:inline-flex;">${ICONS.card}</span></span>
       <div>
         <strong style="display:block;font-size:13px;">Facilidade no Pagamento</strong>
         <small style="color:#94A3B8;font-size:11.5px;">Condições e parcelamento</small>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="width:40px;height:40px;border-radius:12px;background:rgba(220,38,38,0.2);color:#F87171;display:grid;place-items:center;font-size:18px;">🚚</span>
+      <span style="width:42px;height:42px;border-radius:12px;background:rgba(220,38,38,0.18);border:1px solid rgba(248,113,113,0.28);color:#F87171;display:grid;place-items:center;flex-shrink:0;"><span style="width:20px;height:20px;display:inline-flex;">${ICONS.truck}</span></span>
       <div>
         <strong style="display:block;font-size:13px;">Entrega & Montagem</strong>
         <small style="color:#94A3B8;font-size:11.5px;">Agilidade garantida em ${esc(b.city)}</small>
@@ -910,7 +910,7 @@ export function bento(ctx) {
         <p${ed(`item.${i}.description`)}>${esc(cardValDesc)}</p>
         <div class="service-foot-val">
           <span class="service-tag-val"${ed(`item.${i}.price`)}>${esc(it.price || it.category || "Sob medida")}</span>
-          <a class="discover-val" href="${waLink(b, msg)}" target="_blank" rel="noopener" data-wa data-btn="${btnId}"${style} title="Pedir orçamento no WhatsApp">→</a>
+          <a class="discover-val" href="${waLink(b, msg)}" target="_blank" rel="noopener" data-wa data-btn="${btnId}"${style} title="Pedir orçamento no WhatsApp"><span style="width:15px;height:15px;display:inline-flex">${ICONS.arrowR}</span></a>
         </div>
       </div>
     </article>`;
@@ -1271,7 +1271,7 @@ export function faq(ctx) {
       .map(
         (f, i) => `
     <div class="zycron-chat-faq-item">
-      <div class="zycron-chat-q"><span${ed(`faq.${i}.q`)}>${esc(f.q)}</span><span style="font-size:11px;opacity:.8">✓✓</span></div>
+      <div class="zycron-chat-q"><span${ed(`faq.${i}.q`)}>${esc(f.q)}</span><span style="width:14px;height:14px;display:inline-flex;opacity:.8">${ICONS.checkDouble}</span></div>
       <div class="zycron-chat-a"${ed(`faq.${i}.a`)}>${esc(f.a)}</div>
     </div>`
       )

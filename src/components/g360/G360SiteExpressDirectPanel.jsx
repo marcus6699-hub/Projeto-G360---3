@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Search,
@@ -26,6 +26,12 @@ import {
   X,
   BadgeCheck,
   Check,
+  Activity,
+  Star,
+  MapPin,
+  MessageSquare,
+  Terminal,
+  CheckCircle2,
 } from "lucide-react";
 import { api, fmtErr } from "@/lib/api";
 import { SITE_TEMPLATES } from "@/lib/sitegen/theme";
@@ -81,204 +87,23 @@ export function getRecommendedTemplate(biz) {
   return "vitrine-express";
 }
 
-function renderArchetypeVisual(tplId) {
-  switch (tplId) {
-    case "zycron-barbearia":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#16181B] p-2 flex flex-col justify-between border border-white/10 text-white select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-white/10">
-            <span className="text-[7.5px] font-black tracking-widest text-slate-200 uppercase">BARBER STUDIO</span>
-            <span className="text-[7px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">● Aberto</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8.5px] font-black uppercase text-white leading-tight truncate">CORTE & ESTILO</div>
-              <div className="w-12 h-1 rounded bg-[#2443C2]" />
-            </div>
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2443C2] to-slate-800 flex items-center justify-center text-[10px] shadow shrink-0">
-              ✂
-            </div>
-          </div>
-          <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[7px]">
-            <span className="font-bold text-amber-400">★ 5.0 (Google)</span>
-            <span className="font-extrabold px-1.5 py-0.5 rounded bg-[#2443C2] text-white">Agendar</span>
-          </div>
-        </div>
-      );
-
-    case "zycron-padaria":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#3B2342] p-2 flex flex-col justify-between border border-pink-500/20 text-white select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-white/10">
-            <span className="text-[7.5px] font-bold text-[#F1E6F5]">Padaria & Confeitaria</span>
-            <span className="text-[6.5px] font-bold text-[#F1E6F5]/80">Fornos a lenha</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8px] font-serif font-bold text-[#F1E6F5] truncate">Pães & Bolos Frescos</div>
-              <div className="text-[6.5px] px-1 py-0.5 rounded bg-[#9C3D6E]/50 text-white inline-block">Encomendas 24h</div>
-            </div>
-            <div className="w-7 h-8 rounded-t-full bg-gradient-to-b from-[#9C3D6E] to-[#F1E6F5]/20 flex items-center justify-center text-[10px] border border-white/20 shrink-0">
-              🥐
-            </div>
-          </div>
-          <div className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300 text-[6.5px] flex items-center justify-between">
-            <span>✓✓ Pedido WhatsApp</span>
-            <span className="font-bold">Ao Vivo</span>
-          </div>
-        </div>
-      );
-
-    case "zycron-moda":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#F6F4F1] p-2 flex flex-col justify-between border border-black/10 text-[#151515] select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-black/10">
-            <span className="text-[7.5px] font-serif tracking-widest uppercase font-bold">CONCEPT LOOKBOOK</span>
-            <span className="text-[6.5px] text-slate-500">2026/EDITION</span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 py-1 flex-1">
-            <div className="rounded bg-gradient-to-b from-stone-300 to-stone-500 p-1 flex flex-col justify-end text-white">
-              <span className="text-[6px] font-bold leading-none">NOVA COLEÇÃO</span>
-            </div>
-            <div className="rounded bg-gradient-to-b from-stone-400 to-stone-700 p-1 flex flex-col justify-end text-white">
-              <span className="text-[6px] font-bold leading-none">EDITORIAL 4:5</span>
-            </div>
-          </div>
-          <div className="text-[6px] font-mono uppercase tracking-wider text-slate-600 truncate border-t border-black/10 pt-0.5">
-            ✦ EXCLUSIVIDADE ✦ ALTO PADRÃO ✦ DESIGN
-          </div>
-        </div>
-      );
-
-    case "simprao":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#153E23] p-2 flex flex-col justify-between border border-emerald-500/20 text-white select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-white/10">
-            <span className="text-[7.5px] font-black uppercase text-[#F3C94D]">SABOR REGIONAL</span>
-            <span className="text-[6.5px] font-bold text-amber-300">★ 4.9 (Google)</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8px] font-black text-white leading-tight truncate">Cardápio & Delivery</div>
-              <div className="text-[6.5px] text-emerald-200">Pratos & Lanches</div>
-            </div>
-            <div className="w-7 h-7 rounded-full bg-[#2D7819] border border-[#F3C94D] flex items-center justify-center text-[10px] shrink-0">
-              🍕
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[6px] font-bold">
-            <span className="rounded bg-[#F3C94D] text-[#153E23] py-0.5">Pizzas</span>
-            <span className="rounded bg-white/10 text-white py-0.5">Pratos</span>
-            <span className="rounded bg-white/10 text-white py-0.5">Delivery</span>
-          </div>
-        </div>
-      );
-
-    case "atelie-val":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#F7F3EE] p-2 flex flex-col justify-between border border-[#AD806E]/30 text-[#373B32] select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-[#AD806E]/20">
-            <div className="flex items-center gap-1">
-              <div className="w-3.5 h-3.5 rounded-full bg-[#A57258] text-white flex items-center justify-center text-[6.5px] font-bold">AV</div>
-              <span className="text-[7.5px] font-serif font-bold text-[#A57258]">Estética & Beleza</span>
-            </div>
-            <span className="text-[6.5px] text-stone-500">Atendimento VIP</span>
-          </div>
-          <div className="flex items-center justify-between gap-1 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[7.5px] font-serif font-bold text-[#373B32] truncate">Cuidados & Realce</div>
-              <div className="flex gap-1 text-[6px] font-bold text-[#A57258]">
-                <span>100% Seguro</span> · <span>5.0 ★</span>
-              </div>
-            </div>
-            <div className="w-7 h-7 rounded-lg bg-[#A57258]/15 border border-[#A57258]/40 flex items-center justify-center text-[10px] shrink-0">
-              ✨
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-0.5 pt-0.5 border-t border-[#AD806E]/20 text-center text-[5.5px] font-semibold text-[#A57258]">
-            <span className="rounded bg-white py-0.5">Facial</span>
-            <span className="rounded bg-white py-0.5">Corpo</span>
-            <span className="rounded bg-white py-0.5">Laser</span>
-            <span className="rounded bg-white py-0.5">Agendar</span>
-          </div>
-        </div>
-      );
-
-    case "modelo-premium":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#0C2926] p-2 flex flex-col justify-between border border-emerald-500/20 text-white select-none shadow-inner">
-          <div className="flex items-center justify-between pb-1 border-b border-white/10">
-            <span className="text-[7.5px] font-black uppercase tracking-wider text-[#B5D7B6]">CENTRO MÉDICO & B2B</span>
-            <span className="text-[6.5px] font-bold text-emerald-400">✓ Ativo</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8px] font-extrabold text-white leading-tight truncate">Alta Autoridade</div>
-              <div className="text-[6.5px] text-[#B5D7B6]">Corpo Clínico & Exames</div>
-            </div>
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2F6353] to-emerald-950 border border-emerald-400/30 flex items-center justify-center text-[10px] shrink-0">
-              ⚕️
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[6px] font-bold">
-            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">01 Consulta</span>
-            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">02 Exames</span>
-            <span className="rounded bg-emerald-900/60 text-emerald-200 py-0.5">03 Contato</span>
-          </div>
-        </div>
-      );
-
-    case "novolar-moveis":
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#0F172A] p-2 flex flex-col justify-between border border-red-500/30 text-white select-none shadow-inner relative">
-          <div className="bg-[#DC2626] -mx-2 -mt-2 px-2 py-0.5 flex items-center justify-between text-[6.5px] font-black uppercase text-white tracking-wider">
-            <span>🛋️ MÓVEIS NOVO LAR</span>
-            <span>⭐ 5.0 GOOGLE</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8px] font-black text-white leading-tight truncate">Conforto & Ambientes</div>
-              <div className="text-[6.5px] text-red-300">Sofás, Colchões & Ambientes</div>
-            </div>
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#DC2626] to-slate-900 border border-white/20 flex items-center justify-center text-[10px] shrink-0">
-              🛏️
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-0.5 pt-0.5 border-t border-white/10 text-center text-[5.5px] font-bold text-slate-200">
-            <span className="rounded bg-white/10 py-0.5">Sofás</span>
-            <span className="rounded bg-white/10 py-0.5">Colchões</span>
-            <span className="rounded bg-white/10 py-0.5">Mesas</span>
-            <span className="rounded bg-[#DC2626] text-white py-0.5">Catálogo</span>
-          </div>
-        </div>
-      );
-
-    case "vitrine-express":
-    default:
-      return (
-        <div className="w-full h-[90px] rounded-lg overflow-hidden bg-[#111827] p-2 flex flex-col justify-between border border-blue-500/30 text-white select-none shadow-inner">
-          <div className="bg-[#2563EB] -mx-2 -mt-2 px-2 py-0.5 flex items-center justify-between text-[6.5px] font-black uppercase text-white tracking-wider">
-            <span>⚡ ENTREGA RÁPIDA</span>
-            <span>💳 PIX & CARTÃO</span>
-          </div>
-          <div className="flex items-center justify-between gap-1.5 py-1">
-            <div className="space-y-0.5 flex-1 min-w-0">
-              <div className="text-[8px] font-black text-white leading-tight truncate">Catálogo & Pronta Entrega</div>
-              <div className="text-[6.5px] font-bold text-amber-400">Orçamento no WhatsApp</div>
-            </div>
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2563EB] to-slate-900 border border-amber-400/40 flex items-center justify-center text-[10px] shrink-0">
-              📦
-            </div>
-          </div>
-          <div className="flex items-center justify-between pt-0.5 border-t border-white/10 text-[6.5px]">
-            <span className="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold">R$ Preço Justo</span>
-            <span className="font-extrabold px-1.5 py-0.5 rounded bg-emerald-600 text-white">
-              Pedir WhatsApp →
-            </span>
-          </div>
-        </div>
-      );
-  }
+// Live miniature website preview helper (renders the real generated site HTML instead of a static sketch)
+function renderLiveTemplateIframePreview(tpl, htmlDoc) {
+  return (
+    <div className="relative h-[185px] w-full rounded-xl overflow-hidden bg-slate-950 border border-slate-200/80 dark:border-white/10 shadow-inner">
+      <iframe
+        title={`Preview Real ${tpl.name}`}
+        srcDoc={htmlDoc}
+        className="border-0 pointer-events-none origin-top-left bg-white"
+        style={{
+          width: "285%",
+          height: "530px",
+          transform: "scale(0.351)",
+        }}
+        sandbox="allow-same-origin"
+      />
+    </div>
+  );
 }
 
 export default function G360SiteExpressDirectPanel({
@@ -313,8 +138,80 @@ export default function G360SiteExpressDirectPanel({
   const [deployProvider, setDeployProvider] = useState("vercel");
   const [vercelToken, setVercelToken] = useState("");
   const [deployUrlMap, setDeployUrlMap] = useState({});
+  const [reviewsDiagLoading, setReviewsDiagLoading] = useState(false);
+  const [reviewsDiagOpen, setReviewsDiagOpen] = useState(false);
+  const [reviewsDiagResult, setReviewsDiagResult] = useState(null);
   const boxRef = useRef(null);
   const timerRef = useRef(null);
+
+  const previewBizForCards = useMemo(() => {
+    const base = selectedBiz || activeBusiness;
+    if (base && base.name) return base;
+    return {
+      name: query.trim() || "Móveis Novo Lar",
+      category: "Loja de Móveis, Colchões e Eletro",
+      city: "Anápolis",
+      uf: "GO",
+      phone: "(62) 99113-8004",
+      whatsapp: "5562991138004",
+      rating: 4.9,
+      reviews_count: 128,
+    };
+  }, [selectedBiz, activeBusiness, query]);
+
+  const livePreviewHtmlByTemplate = useMemo(() => {
+    const map = {};
+    for (const tpl of SITE_TEMPLATES) {
+      try {
+        const projData = createProjectData(previewBizForCards, tpl.archetype, tpl.id);
+        map[tpl.id] = generateSiteHtml(projData, { editor: false });
+      } catch {
+        map[tpl.id] = "<html><body style='background:#0f172a;color:#fff;font-family:sans-serif;padding:20px'>Carregando preview...</body></html>";
+      }
+    }
+    return map;
+  }, [previewBizForCards]);
+
+  const handleRunReviewsDiagnostic = async () => {
+    const target = selectedBiz || activeBusiness || { name: query.trim() || "Empresa Local", city: "Anápolis" };
+    setReviewsDiagLoading(true);
+    setReviewsDiagOpen(true);
+    try {
+      const { data } = await api.post("/places/reviews-diagnostic", {
+        placeId: target.place_id || target.id || "",
+        businessName: target.name,
+        city: target.city || "Anápolis",
+        category: target.category || target.segment || "",
+        rating: target.rating || 4.9,
+        existingReviews: Array.isArray(target.reviews) ? target.reviews : [],
+      });
+      setReviewsDiagResult(data);
+      if (Array.isArray(data?.parsedReviews) && data.parsedReviews.length > 0) {
+        setSelectedBiz((prev) =>
+          prev
+            ? {
+                ...prev,
+                reviews: data.parsedReviews,
+                _reviewsTrace: data.trace,
+              }
+            : {
+                ...target,
+                reviews: data.parsedReviews,
+                _reviewsTrace: data.trace,
+              }
+        );
+        toast.success(
+          `Diagnóstico GMN concluído: ${data.parsedReviews.length} avaliações reais mapeadas para o estado do site!`
+        );
+      } else {
+        toast.info("Diagnóstico concluído. Verifique o log de rede abaixo.");
+      }
+    } catch (e) {
+      toast.error(fmtErr(e, "Falha ao executar diagnóstico do endpoint de avaliações GMN"));
+    } finally {
+      setReviewsDiagLoading(false);
+    }
+  };
 
   const COLOR_PALETTES = [
     { id: "purple_royal", name: "Roxo G360 Royal", primary: "#7C3AED", secondary: "#1E1B4B" },
@@ -864,7 +761,7 @@ export default function G360SiteExpressDirectPanel({
           {selectedBiz && (
             <div className={`p-4 rounded-2xl border space-y-3 text-[12.5px] ${borderCol} ${subtleBg}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <Building2 size={16} className="text-[#7C3AED]" />
                   <span>
                     Ficha vinculada: <strong>{selectedBiz.name}</strong> ({selectedBiz.category} · {selectedBiz.city || "Anápolis"})
@@ -874,8 +771,30 @@ export default function G360SiteExpressDirectPanel({
                       · {selectedBiz.photos.filter((p) => typeof p === "string" && !p.startsWith("data:image/svg+xml")).length || selectedBiz.photos.length} fotos vinculadas da ficha
                     </span>
                   )}
+                  <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                    <Star size={11} className="fill-current" />
+                    <span>
+                      {Array.isArray(selectedBiz.reviews) && selectedBiz.reviews.length > 0
+                        ? `${selectedBiz.reviews.length} avaliações GMN prontas no site`
+                        : "Avaliações GMN prontas para sincronizar"}
+                    </span>
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunReviewsDiagnostic}
+                    disabled={reviewsDiagLoading}
+                    className="px-3.5 py-1.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-white font-extrabold text-[11.5px] flex items-center gap-1.5 transition-colors cursor-pointer"
+                    data-testid="run-gmn-reviews-diagnostic-btn"
+                  >
+                    <Activity size={13} className={reviewsDiagLoading ? "animate-spin" : ""} />
+                    <span>
+                      {reviewsDiagLoading
+                        ? "Rastreando API GMN..."
+                        : "Diagnóstico & Trace Avaliações GMN"}
+                    </span>
+                  </button>
                   {onOpenVisualBriefing && (
                     <button
                       type="button"
@@ -891,16 +810,137 @@ export default function G360SiteExpressDirectPanel({
                     onClick={() => onOpenTemplates && onOpenTemplates(selectedBiz, selectedTplId)}
                     className="text-[#7C3AED] font-bold hover:underline cursor-pointer"
                   >
-                    Galeria em Tela Cheia (7 Modelos) →
+                    Galeria em Tela Cheia ({SITE_TEMPLATES.length} Modelos) →
                   </button>
                 </div>
               </div>
+
+              {/* GMN REVIEWS NETWORK TRACE & STATE DIAGNOSTIC CONSOLE */}
+              {reviewsDiagOpen && (
+                <div
+                  className="p-4 rounded-2xl bg-slate-950 text-slate-100 border border-purple-500/30 space-y-3 text-[12px] shadow-xl"
+                  data-testid="gmn-reviews-diagnostic-panel"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <Terminal size={15} className="text-emerald-400" />
+                      <span className="font-mono font-bold text-[12.5px] text-emerald-400">
+                        GMN REVIEWS NETWORK TRACE & PARSER DIAGNOSTIC
+                      </span>
+                      {reviewsDiagResult?.trace?.finalSource && (
+                        <span className="px-2 py-0.5 rounded bg-purple-500/20 border border-purple-500/40 text-purple-300 font-mono text-[10.5px]">
+                          Fonte Ativa: {reviewsDiagResult.trace.finalSource}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunReviewsDiagnostic}
+                        disabled={reviewsDiagLoading}
+                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw size={11} className={reviewsDiagLoading ? "animate-spin" : ""} />
+                        <span>Re-testar Endpoint</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReviewsDiagOpen(false)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {reviewsDiagLoading && !reviewsDiagResult ? (
+                    <div className="py-6 text-center font-mono text-slate-300 flex items-center justify-center gap-2">
+                      <RefreshCw size={15} className="animate-spin text-purple-400" />
+                      <span>Inspecionando endpoints Outscraper / Serper / Google Places v1 e validando JSON...</span>
+                    </div>
+                  ) : reviewsDiagResult ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                      {/* Network Trace Steps */}
+                      <div className="lg:col-span-6 space-y-2">
+                        <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
+                          1. Pipeline de Rede (Endpoints Inspecionados):
+                        </div>
+                        <div className="space-y-1.5">
+                          {(reviewsDiagResult.trace?.steps || []).map((st, idx) => (
+                            <div
+                              key={idx}
+                              className="p-2.5 rounded-xl bg-white/[0.04] border border-white/10 flex flex-col gap-1 font-mono text-[11px]"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-white">{st.step}</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    st.status === "SUCCESS"
+                                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                      : st.status === "EMPTY" || st.status === "SKIPPED"
+                                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                      : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                  }`}
+                                >
+                                  {st.status} {st.httpStatus ? `(HTTP ${st.httpStatus})` : ""} · {st.latencyMs ?? 0}ms
+                                </span>
+                              </div>
+                              <div className="text-slate-400 truncate">
+                                Endpoint: <span className="text-slate-200">{st.endpoint}</span>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
+                                <span className="text-purple-300">
+                                  Brutos: {st.rawCount ?? 0} → Parseados: {st.parsedCount ?? 0}
+                                </span>
+                                {st.note && <span className="text-slate-400">{st.note}</span>}
+                                {st.error && <span className="text-rose-400">{st.error}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Mapped State Verification */}
+                      <div className="lg:col-span-6 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
+                            2. Mapeamento no Estado do Site (project.data.business.reviews):
+                          </span>
+                          <span className="text-[11px] font-mono text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 size={12} />
+                            {reviewsDiagResult.stateMappingCheck?.reviewsArrayLength || 0} avaliações injetadas
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-[210px] overflow-y-auto pr-1">
+                          {(reviewsDiagResult.parsedReviews || []).map((rev, rIdx) => (
+                            <div
+                              key={rIdx}
+                              className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/25 space-y-1"
+                            >
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="font-bold text-emerald-200">{rev.author}</span>
+                                <span className="font-mono text-amber-300">
+                                  {"★".repeat(Math.max(1, Math.min(5, Math.round(Number(rev.rating) || 5))))} ({rev.rating}) · {rev.date}
+                                </span>
+                              </div>
+                              <p className="text-[11.5px] text-slate-200 leading-snug line-clamp-2">
+                                "{rev.text}"
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
               {/* Visual Template Strip + Color Palette Selector */}
               <div className="space-y-3 pt-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#7C3AED]">
-                    Escolha o Modelo Visual (7 Arquétipos) & Paleta de Cores:
+                    Escolha o Modelo Real do Site ({SITE_TEMPLATES.length} Modelos Renderizados ao Vivo) & Paleta de Cores:
                   </span>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {COLOR_PALETTES.map((pal) => {
@@ -927,7 +967,7 @@ export default function G360SiteExpressDirectPanel({
                   </div>
                 </div>
 
-                {/* 7 BESPOKE VISUAL ARCHETYPES GRID */}
+                {/* LIVE RENDERED WEBSITE TEMPLATES GRID */}
                 {(() => {
                   const recTplId = getRecommendedTemplate(selectedBiz || activeBusiness);
                   const selectedTemplateObj = SITE_TEMPLATES.find((t) => t.id === selectedTplId) || SITE_TEMPLATES[0];
@@ -935,7 +975,7 @@ export default function G360SiteExpressDirectPanel({
 
                   return (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         {SITE_TEMPLATES.map((tpl) => {
                           const isSelected = selectedTplId === tpl.id;
                           const isRecommended = recTplId === tpl.id;
@@ -944,7 +984,7 @@ export default function G360SiteExpressDirectPanel({
                             <div
                               key={tpl.id}
                               onClick={() => setSelectedTplId(tpl.id)}
-                              className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 relative group ${
+                              className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 relative group ${
                                 isSelected
                                   ? "border-[#7C3AED] bg-[#7C3AED]/10 ring-2 ring-[#7C3AED]/40 shadow-md"
                                   : isRecommended
@@ -956,73 +996,73 @@ export default function G360SiteExpressDirectPanel({
                               {/* Recommendation Badge or Selection Status */}
                               <div className="flex items-center justify-between gap-1">
                                 {isRecommended ? (
-                                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[8.5px] font-black tracking-wide flex items-center gap-0.5 shadow-sm">
-                                    <BadgeCheck size={10} />
-                                    <span>IDEAL</span>
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[9.5px] font-black tracking-wide flex items-center gap-1 shadow-sm">
+                                    <BadgeCheck size={11} />
+                                    <span>IDEAL PARA O NICHO</span>
                                   </span>
                                 ) : (
-                                  <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-[#7C3AED] truncate">
+                                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#7C3AED] truncate">
                                     {tpl.badge?.split("·")[0] || tpl.archetype}
                                   </span>
                                 )}
 
                                 {isSelected && (
-                                  <span className="w-4 h-4 rounded-full bg-[#7C3AED] text-white flex items-center justify-center text-[9px] font-black shrink-0">
-                                    ✓
+                                  <span className="w-5 h-5 rounded-full bg-[#7C3AED] text-white flex items-center justify-center shrink-0">
+                                    <Check size={12} />
                                   </span>
                                 )}
                               </div>
 
-                              {/* BESPOKE WIREFRAME VISUAL FOR THIS ARCHETYPE */}
+                              {/* REAL LIVE RENDERED SITE MINIATURE PREVIEW */}
                               <div className="relative group/vis">
-                                {renderArchetypeVisual(tpl.id)}
+                                {renderLiveTemplateIframePreview(tpl, livePreviewHtmlByTemplate[tpl.id])}
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setPreviewModalTpl(tpl);
                                   }}
-                                  className="absolute inset-0 bg-black/60 opacity-0 group-hover/vis:opacity-100 backdrop-blur-[2px] rounded-lg transition-opacity flex items-center justify-center gap-1.5 text-white text-[11px] font-bold cursor-pointer"
-                                  title="Espiar tela cheia"
+                                  className="absolute inset-0 bg-black/60 opacity-0 group-hover/vis:opacity-100 backdrop-blur-[2px] rounded-xl transition-opacity flex items-center justify-center gap-1.5 text-white text-[12px] font-bold cursor-pointer"
+                                  title="Espiar site real em tela cheia"
                                 >
-                                  <Eye size={13} />
-                                  <span>Espiar</span>
+                                  <Eye size={15} />
+                                  <span>Ver Site Real em Tela Cheia</span>
                                 </button>
                               </div>
 
                               {/* Title & Description */}
                               <div className="space-y-1">
-                                <div className="text-[12px] font-black leading-tight line-clamp-1 text-slate-900 dark:text-slate-100">
+                                <div className="text-[13px] font-black leading-tight line-clamp-1 text-slate-900 dark:text-slate-100">
                                   {tpl.name}
                                 </div>
-                                <div className={`text-[10.5px] leading-snug line-clamp-2 ${mutedText}`}>
+                                <div className={`text-[11px] leading-snug line-clamp-2 ${mutedText}`}>
                                   {tpl.subtitle || tpl.description}
                                 </div>
                               </div>
 
                               {/* Card Action Buttons */}
-                              <div className="pt-1 border-t border-inherit/60 flex items-center justify-between gap-1">
+                              <div className="pt-1.5 border-t border-inherit/60 flex items-center justify-between gap-1">
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setPreviewModalTpl(tpl);
                                   }}
-                                  className={`px-2 py-1 rounded-lg text-[10.5px] font-extrabold flex items-center gap-1 transition-colors ${
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-colors ${
                                     isSelected
                                       ? "text-[#7C3AED] hover:bg-[#7C3AED]/20"
                                       : "text-slate-600 dark:text-slate-300 hover:text-[#7C3AED] hover:bg-slate-100 dark:hover:bg-white/10"
                                   }`}
                                   title="Visualizar demonstração"
                                 >
-                                  <Eye size={12} />
+                                  <Eye size={13} />
                                   <span>Demonstração</span>
                                 </button>
 
                                 <button
                                   type="button"
                                   onClick={() => setSelectedTplId(tpl.id)}
-                                  className={`px-2 py-1 rounded-lg text-[10.5px] font-black ${
+                                  className={`px-3 py-1 rounded-lg text-[11px] font-black ${
                                     isSelected
                                       ? "bg-[#7C3AED] text-white"
                                       : "bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200"
@@ -1068,23 +1108,28 @@ export default function G360SiteExpressDirectPanel({
                               {selectedTemplateObj.description}
                             </p>
 
-                            {/* Section breakdown */}
+                            {/* Section breakdown with real vector icons (no emojis) */}
                             <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
                               <span className="font-extrabold uppercase text-[#7C3AED]">Seções Inclusas:</span>
-                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
-                                ⚡ Hero Alta Conversão
+                              <span className="px-2.5 py-1 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5">
+                                <Sparkles size={12} className="text-[#7C3AED]" />
+                                <span>Hero Alta Conversão</span>
                               </span>
-                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
-                                📦 Catálogo de Serviços/Produtos
+                              <span className="px-2.5 py-1 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5">
+                                <Archive size={12} className="text-[#7C3AED]" />
+                                <span>Catálogo de Serviços/Produtos</span>
                               </span>
-                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
-                                ⭐ Avaliações Reais Google (5.0)
+                              <span className="px-2.5 py-1 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5">
+                                <Star size={12} className="text-amber-500" />
+                                <span>Avaliações Reais Google (GMN)</span>
                               </span>
-                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
-                                📍 Endereço & Horários Oficiais
+                              <span className="px-2.5 py-1 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5">
+                                <MapPin size={12} className="text-[#7C3AED]" />
+                                <span>Endereço & Horários Oficiais</span>
                               </span>
-                              <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200">
-                                💬 Botão Flutuante de WhatsApp
+                              <span className="px-2.5 py-1 rounded-md bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 font-bold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5">
+                                <MessageSquare size={12} className="text-emerald-500" />
+                                <span>Botão Flutuante de WhatsApp</span>
                               </span>
                             </div>
                           </div>
